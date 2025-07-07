@@ -279,7 +279,7 @@ class QuestionAnsweringWorkFlowBase(WorkFlowBase):
                 self.add_error("No questions found in Excel file")
                 return False
                 
-            print(f"Questions loaded: {len(self.questions)}")
+            # Suppressed: print(f"Questions loaded: {len(self.questions)}")
             return True
             
         except Exception as e:
@@ -366,9 +366,7 @@ Provide only the JSON response, no additional text.
                 raise ValueError("Transcript content not loaded")
             
             # Show progress if requested
-            if show_progress and total_questions > 0:
-                if question_index == 0 or (question_index + 1) % 5 == 0 or question_index == total_questions - 1:
-                    print(f"  Processing question {question_index + 1}/{total_questions}: {question[:50]}...")
+            # Suppressed per-question progress output
 
             # Create prompt and get LLM response
             prompt = self.create_question_prompt(question, self.transcript_content)
@@ -406,14 +404,14 @@ Provide only the JSON response, no additional text.
             return []
         
         try:
-            print(f"Processing {len(questions)} questions")
+            # Suppressed batch processing output
             questions_answers = []
             
             for i, question in enumerate(questions):
                 qa = self.process_single_question(question, True, i, len(questions))
                 questions_answers.append(qa)
             
-            print(f"Completed processing {len(questions_answers)} questions")
+            # Suppressed batch completion output
             return questions_answers
             
         except Exception as e:
@@ -472,17 +470,3 @@ Provide only the JSON response, no additional text.
             "processing_time": getattr(self._processing_stats, 'processing_time', 'Unknown'),
             "timestamp": datetime.now().isoformat()
         }
-
-    def load_transcript(self, file_path: str) -> bool:
-        """Load transcript from file."""
-        return self.load_transcript_from_file(file_path)
-    
-    def load_questions(self, questions_data: List[Dict[str, Any]]) -> bool:
-        """Load questions for processing."""
-        try:
-            self.questions = questions_data
-            print(f"Questions loaded: {len(self.questions)}")
-            return True
-        except Exception as e:
-            self.add_error(f"Failed to load questions: {str(e)}")
-            return False

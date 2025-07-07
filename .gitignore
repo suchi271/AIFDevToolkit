@@ -21,6 +21,9 @@ wheels/
 *.egg
 MANIFEST
 
+# Jupyter Notebook
+.ipynb_checkpoints
+
 # Environment variables
 .env
 .env.local
@@ -36,7 +39,6 @@ env/
 
 # Input and Output directories
 input/
-Input files/
 output/
 
 # IDE and Editor files

@@ -1,29 +1,33 @@
 
-from Workflows import FilledAIF, EnhancedFilledAIF
+from Workflows.CompleteMigrationPlan import CompleteMigrationPlanWorkflow
+from State import State
+from Input import Input
 import sys
+import logging
+import os
+
+# Suppress HTTP request logging
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("openai").setLevel(logging.WARNING)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
+logging.getLogger("azure").setLevel(logging.WARNING)
+
+# Set environment variable to reduce Azure SDK verbosity
+os.environ.setdefault("AZURE_LOG_LEVEL", "WARNING")
 
 def main():
     print("SorthaDevKit - Developer Toolkit")
     print("=" * 40)
-    print("Available workflows:")
-    print("1. Standard AIF Completion (existing functionality)")
-    print("2. Enhanced AIF Completion with Architecture Diagram")
-    print()
-    
-    # Check command line arguments
-    if len(sys.argv) > 1:
-        choice = sys.argv[1]
+    print("Running Complete Azure Migration Plan Generation (non-interactive)...")
+    state = State(inputs=Input)
+    workflow = CompleteMigrationPlanWorkflow(state)
+    result = workflow.run()
+    if result.success:
+        print("\n✅ Complete migration plan generated successfully!")
     else:
-        choice = input("Select workflow (1 or 2, default: 2): ").strip()
-        if not choice:
-            choice = "2"
-    
-    if choice == "1":
-        print("Running Standard AIF Completion...")
-        FilledAIF.main()
-    else:
-        print("Running Enhanced AIF Completion with Architecture Diagram...")
-        EnhancedFilledAIF.main()
+        print("\n❌ Migration plan generation failed:")
+        for error in result.errors:
+            print(f"  - {error}")
 
 if __name__ == "__main__":
     main()
