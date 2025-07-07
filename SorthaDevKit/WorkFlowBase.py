@@ -20,11 +20,11 @@ class StateGraph:
         self.nodes = {}
         self.edges = []
     
-    def __add_node__(self, node_name: str, node_function: Callable):
+    def add_node(self, node_name: str, node_function: Callable):
         """Add a node to the graph."""
         self.nodes[node_name] = node_function
     
-    def __add_edge__(self, from_node: str, to_node: str):
+    def add_edge(self, from_node: str, to_node: str):
         """Add an edge between two nodes."""
         self.edges.append((from_node, to_node))
     
