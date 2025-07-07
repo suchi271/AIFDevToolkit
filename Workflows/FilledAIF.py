@@ -15,7 +15,6 @@ def main():
     print()
     
     try:
-        # Import required modules
         print("Loading modules...")
         from Workflow import QuestionAnsweringWorkFlow
         from State import State

@@ -36,7 +36,6 @@ class QuestionAnsweringWorkFlow(QuestionAnsweringWorkFlowBase):
             return initial_state
     
     def load_inputs(self, state: State) -> State:
-        """Load and process input files (transcript and questions Excel) using base class methods."""
         try:
             # Load transcript content using base class method
             if 'transcript' in state.inputs:
