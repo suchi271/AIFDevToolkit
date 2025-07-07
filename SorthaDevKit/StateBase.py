@@ -22,7 +22,6 @@ class StateBase(BaseModel):
     output: str = Field(default='', description="Output of the workflow")
 
 class QuestionAnswer(BaseModel):
-    """Data model for a question-answer pair."""
     question: str
     answer: str = ""
     confidence: str = "Medium"
@@ -33,15 +32,12 @@ class QuestionAnswer(BaseModel):
     timestamp: str = Field(default_factory=lambda: datetime.now().isoformat())
 
 class ExcelOutputType(BaseModel):
-    """Data model for Excel output structure."""
     questions_answers: List[QuestionAnswer] = Field(default_factory=list)
     unanswered_questions: List[str] = Field(default_factory=list)
     metadata: Dict[str, Any] = Field(default_factory=dict)
     summary: Dict[str, Any] = Field(default_factory=dict)
 
-# New models for Azure Migrate and Architecture Diagram functionality
 class AzureMigrateServer(BaseModel):
-    """Data model for Azure Migrate server information."""
     server_name: str = ""
     server_type: str = ""
     operating_system: str = ""
@@ -66,14 +62,12 @@ class AzureMigrateServer(BaseModel):
     discovered_applications: List[str] = Field(default_factory=list)
 
 class AzureMigrateReport(BaseModel):
-    """Data model for Azure Migrate report data."""
     servers: List[AzureMigrateServer] = Field(default_factory=list)
     summary: Dict[str, Any] = Field(default_factory=dict)
     metadata: Dict[str, Any] = Field(default_factory=dict)
     report_date: str = Field(default_factory=lambda: datetime.now().isoformat())
 
 class ArchitectureComponent(BaseModel):
-    """Data model for architecture diagram components."""
     component_id: str
     component_type: str  # VM, Database, LoadBalancer, Network, etc.
     name: str
@@ -86,7 +80,6 @@ class ArchitectureComponent(BaseModel):
     migration_type: str = "lift-and-shift"  # lift-and-shift, modernize, rearchitect
 
 class ArchitectureDiagram(BaseModel):
-    """Data model for architecture diagram."""
     diagram_id: str = Field(default_factory=lambda: f"arch_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
     title: str = "Azure Target Architecture"
     components: List[ArchitectureComponent] = Field(default_factory=list)
@@ -95,7 +88,6 @@ class ArchitectureDiagram(BaseModel):
     created_date: str = Field(default_factory=lambda: datetime.now().isoformat())
 
 class WorkflowState(BaseModel):
-    """Base state class for workflow operations."""
     current_step: str = ""
     progress: float = 0.0
     status: str = "initialized"
@@ -103,12 +95,10 @@ class WorkflowState(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict)
     
     def add_error(self, error: str):
-        """Add an error to the state."""
         self.errors.append(error)
         self.status = "error"
     
     def set_progress(self, progress: float, step: str = ""):
-        """Update progress and current step."""
         self.progress = max(0.0, min(100.0, progress))
         if step:
             self.current_step = step
@@ -119,7 +109,6 @@ class WorkflowState(BaseModel):
             self.status = "running"
 
 class ProcessingResult(BaseModel):
-    """Result of a processing operation."""
     success: bool = False
     message: str = ""
     data: Any = None
@@ -127,12 +116,10 @@ class ProcessingResult(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict)
     
     def add_error(self, error: str):
-        """Add an error to the result."""
         self.errors.append(error)
         self.success = False
     
     def set_success(self, message: str = "", data: Any = None):
-        """Mark the result as successful."""
         self.success = True
         if message:
             self.message = message
@@ -141,7 +128,6 @@ class ProcessingResult(BaseModel):
 
 @dataclass
 class MigrationWave:
-    """Represents a migration wave/phase in the migration plan."""
     wave_number: int
     name: str
     description: str
@@ -157,7 +143,6 @@ class MigrationWave:
 
 @dataclass
 class MigrationRisk:
-    """Represents a migration risk assessment."""
     risk_id: str
     description: str
     impact: str  # Low, Medium, High, Critical
@@ -168,7 +153,6 @@ class MigrationRisk:
 
 @dataclass
 class CostEstimate:
-    """Represents cost estimates for the migration."""
     category: str  # Compute, Storage, Network, Management, etc.
     current_monthly_cost: float
     azure_monthly_cost: float
@@ -179,7 +163,6 @@ class CostEstimate:
 
 @dataclass
 class MigrationTimeline:
-    """Represents the overall migration timeline."""
     total_duration_months: int
     waves: List[MigrationWave]
     key_milestones: List[Dict[str, str]]
@@ -188,8 +171,6 @@ class MigrationTimeline:
 
 @dataclass
 class AzureMigrationPlan:
-    """Complete Azure Migration Plan document data structure."""
-    # Executive Summary
     project_name: str
     executive_summary: str
     business_case: str
@@ -238,5 +219,5 @@ class AzureMigrationPlan:
     # Metadata
     document_version: str = "1.0"
     created_date: str = field(default_factory=lambda: datetime.now().strftime("%Y-%m-%d"))
-    created_by: str = "SorthaDevKit"
+    created_by: str = "Suchitha Malisetty"
     last_updated: str = field(default_factory=lambda: datetime.now().strftime("%Y-%m-%d"))

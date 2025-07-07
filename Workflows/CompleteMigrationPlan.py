@@ -67,7 +67,7 @@ class CompleteMigrationPlanWorkflow(QuestionAnsweringWorkFlowBase):
             if not self._initialize_azure_openai():
                 result.add_error("Failed to connect to Azure OpenAI")
                 return result
-            print("✓ Connected to gpt-4o")
+            print("✓ Connected to Azure OpenAI")
             
             # Step 4: Process Azure Migrate report
             print("Processing Azure Migrate report...")

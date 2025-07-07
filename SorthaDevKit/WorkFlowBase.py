@@ -7,29 +7,23 @@ import json
 import re
 from .StateBase import WorkflowState, ProcessingResult, QuestionAnswer, ExcelOutputType
 
-# Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 T = TypeVar('T', bound=WorkflowState)
 
 class StateGraph:
-    """State graph implementation with add_node and add_edge methods."""
-    
     def __init__(self):
         self.nodes = {}
         self.edges = []
     
     def add_node(self, node_name: str, node_function: Callable):
-        """Add a node to the graph."""
         self.nodes[node_name] = node_function
     
     def add_edge(self, from_node: str, to_node: str):
-        """Add an edge between two nodes."""
         self.edges.append((from_node, to_node))
     
     def __getitem__(self, key):
-        """Allow dictionary-style access for backward compatibility."""
         if key == "nodes":
             return self.nodes
         elif key == "edges":
@@ -38,10 +32,7 @@ class StateGraph:
             raise KeyError(f"Unknown key: {key}")
 
 class WorkFlowBase(ABC):
-    """Base class for all workflows in the SorthaDevKit."""
-    
     def __init__(self, name: str = "BaseWorkflow"):
-        """Initialize the workflow."""
         self.name = name
         self.state: Optional[WorkflowState] = None
         self.steps: List[str] = []
@@ -170,7 +161,7 @@ class WorkFlowBase(ABC):
         return status
 
 class QuestionAnsweringWorkFlowBase(WorkFlowBase):
-    """Base class for question-answering workflows with common functionality."""
+    """Base class for AIF filling workflows with common functionality."""
     
     def __init__(self, name: str = "QAWorkflow"):
         """Initialize the QA workflow."""
@@ -323,7 +314,6 @@ Provide only the JSON response, no additional text.
     def parse_llm_response(self, question: str, llm_response: str) -> QuestionAnswer:
         """Parse LLM response into QuestionAnswer object with robust error handling."""
         try:
-            # Try to extract JSON from the response
             json_match = re.search(r'\{.*\}', llm_response, re.DOTALL)
             if json_match:
                 response_data = json.loads(json_match.group())
@@ -336,7 +326,6 @@ Provide only the JSON response, no additional text.
                     is_answered=response_data.get('is_answered', False)
                 )
             else:
-                # Fallback parsing if JSON extraction fails
                 return QuestionAnswer(
                     question=question,
                     answer=llm_response.strip(),
@@ -346,7 +335,6 @@ Provide only the JSON response, no additional text.
                 )
                 
         except Exception as e:
-            # Error fallback
             self.logger.error(f"Failed to parse LLM response: {str(e)}")
             return QuestionAnswer(
                 question=question,

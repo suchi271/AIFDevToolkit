@@ -18,7 +18,6 @@ os.environ.setdefault("AZURE_LOG_LEVEL", "WARNING")
 def main():
     print("SorthaDevKit - Developer Toolkit")
     print("=" * 40)
-    print("Running Complete Azure Migration Plan Generation (non-interactive)...")
     state = State(inputs=Input)
     workflow = CompleteMigrationPlanWorkflow(state)
     result = workflow.run()
