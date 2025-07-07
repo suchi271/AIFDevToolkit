@@ -27,7 +27,6 @@ class ExcelProcessor:
             else:
                 df = pd.read_excel(file_path)
             
-            # Handle different possible column names
             possible_columns = [question_column, 'Questions', 'Question', 'questions', 'QUESTION']
             question_col = None
             
@@ -37,7 +36,6 @@ class ExcelProcessor:
                     break
             
             if question_col is None:
-                # If no standard column found, use the first column
                 question_col = df.columns[0]
             
             questions = df[question_col].dropna().tolist()
@@ -57,20 +55,13 @@ class ExcelProcessor:
             original_questions_file: Path to original questions file for reference
         """
         try:
-            # Create a new workbook
             wb = openpyxl.Workbook()
-            
-            # Sheet 1: Questions and Answers
             ws_qa = wb.active
-            ws_qa.title = "Questions & Answers"
-            
-            # Headers
+            ws_qa.title = "AI Assisted AIF Completion"
             headers = ['Question', 'Answer', 'Confidence', 'Source Reference', 'Status']
             for col, header in enumerate(headers, 1):
                 ws_qa.cell(row=1, column=col, value=header)
                 ws_qa.cell(row=1, column=col).font = openpyxl.styles.Font(bold=True)
-            
-            # Data rows
             for row, qa in enumerate(excel_output.questions_answers, 2):
                 ws_qa.cell(row=row, column=1, value=qa.question)
                 ws_qa.cell(row=row, column=2, value=qa.answer)
@@ -78,7 +69,6 @@ class ExcelProcessor:
                 ws_qa.cell(row=row, column=4, value=qa.source_reference)
                 ws_qa.cell(row=row, column=5, value="Answered" if qa.is_answered else "Not Answered")
                 
-                # Color coding based on confidence
                 if qa.confidence == "High":
                     ws_qa.cell(row=row, column=3).fill = openpyxl.styles.PatternFill(start_color="90EE90", end_color="90EE90", fill_type="solid")
                 elif qa.confidence == "Medium":
@@ -86,7 +76,6 @@ class ExcelProcessor:
                 elif qa.confidence == "Low":
                     ws_qa.cell(row=row, column=3).fill = openpyxl.styles.PatternFill(start_color="FFB6C1", end_color="FFB6C1", fill_type="solid")
             
-            # Sheet 2: Summary
             ws_summary = wb.create_sheet(title="Summary")
             
             total_questions = len(excel_output.questions_answers)
@@ -114,7 +103,6 @@ class ExcelProcessor:
                 if label and not str(value).replace(".", "").replace("%", "").isdigit():
                     ws_summary.cell(row=row, column=1).font = openpyxl.styles.Font(bold=True)
             
-            # Sheet 3: Unanswered Questions
             if excel_output.unanswered_questions:
                 ws_unanswered = wb.create_sheet(title="Unanswered Questions")
                 ws_unanswered.cell(row=1, column=1, value="Unanswered Questions")
@@ -123,7 +111,6 @@ class ExcelProcessor:
                 for row, question in enumerate(excel_output.unanswered_questions, 2):
                     ws_unanswered.cell(row=row, column=1, value=question)
             
-            # Auto-adjust column widths
             for ws in wb.worksheets:
                 for column in ws.columns:
                     max_length = 0
@@ -137,7 +124,6 @@ class ExcelProcessor:
                     adjusted_width = min(max_length + 2, 50)
                     ws.column_dimensions[column_letter].width = adjusted_width
             
-            # Save the workbook
             wb.save(output_path)
             
         except Exception as e:
