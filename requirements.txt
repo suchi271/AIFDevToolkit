@@ -1,0 +1,8 @@
+# Azure Architecture Visualization Dependencies
+matplotlib>=3.5.0
+networkx>=2.8.0
+pillow>=9.0.0
+
+# Optional dependencies for extended functionality
+pandas>=1.5.0
+openpyxl>=3.0.0
