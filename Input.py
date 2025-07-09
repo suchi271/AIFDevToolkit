@@ -2,7 +2,7 @@ from SorthaDevKit.StateBase import FileInputType, FileTypes
 
 Input = {
     "transcript": FileInputType(
-        file_path=r"C:\Users\smalisetty\OneDrive - Microsoft\Suchi\MSResearch\DeveloperToolkit\input\input2.txt",
+        file_path=r"C:\Users\smalisetty\OneDrive - Microsoft\Suchi\MSResearch\DeveloperToolkit\input\sample_transcript.txt",
         type=FileTypes.TEXT
     ),
     "questions_excel": FileInputType(

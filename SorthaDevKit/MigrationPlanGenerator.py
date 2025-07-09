@@ -4,16 +4,28 @@ from datetime import datetime, timedelta
 from dataclasses import asdict
 import math
 import statistics
+import openai
+import os
+from dotenv import load_dotenv
 from .StateBase import (
     AzureMigrationPlan, AzureMigrateReport, ArchitectureDiagram, 
     MigrationWave, MigrationRisk, CostEstimate, MigrationTimeline,
     AzureMigrateServer, QuestionAnswer
 )
 
+# Load environment variables from .env file
+load_dotenv()
+
 class AzureMigrationPlanGenerator:
-    """Generator for comprehensive Azure Migration Plan documents."""
+    """Generator for comprehensive Azure Migration Plan documents using AI-driven content generation."""
     
-    def __init__(self):
+    def __init__(self, ai_client=None):
+        """
+        Initialize the migration plan generator with configuration from .env file.
+        
+        Args:
+            ai_client: Optional AI client for content generation. If None, will attempt to initialize from .env.
+        """
         self.migration_strategies = {
             "lift-and-shift": "Rehost applications in Azure with minimal changes",
             "modernize": "Refactor applications to leverage Azure PaaS services",
@@ -28,13 +40,181 @@ class AzureMigrationPlanGenerator:
             "security": "Security and compliance related risks",
             "operational": "Operational risks related to deployment and management"
         }
+        
+        # Load configuration from .env file
+        self.config = self._load_config()
+        
+        # Initialize AI client for content generation
+        self.ai_client = ai_client
+        if self.ai_client is None:
+            self.ai_client = self._initialize_ai_client()
+    
+    def _load_config(self) -> Dict[str, Any]:
+        """Load configuration settings from .env file."""
+        return {
+            # AI Settings
+            "ai_temperature": float(os.getenv("AI_TEMPERATURE", os.getenv("AZURE_OPENAI_TEMPERATURE", "0.7"))),
+            "ai_max_tokens": int(os.getenv("AI_MAX_TOKENS", "2000")),
+            "ai_timeout_seconds": int(os.getenv("AI_TIMEOUT_SECONDS", "60")),
+            "ai_model": os.getenv("OPENAI_MODEL", os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4")),
+            "ai_api_version": os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-01"),
+            
+            # Content Generation Preferences
+            "content_style": os.getenv("CONTENT_STYLE", "professional"),
+            "detail_level": os.getenv("DETAIL_LEVEL", "comprehensive"),
+            "include_technical_details": os.getenv("INCLUDE_TECHNICAL_DETAILS", "true").lower() == "true",
+            "include_cost_analysis": os.getenv("INCLUDE_COST_ANALYSIS", "true").lower() == "true",
+            "include_risk_assessment": os.getenv("INCLUDE_RISK_ASSESSMENT", "true").lower() == "true",
+            
+            # Migration Plan Customization
+            "default_project_name": os.getenv("DEFAULT_PROJECT_NAME", "Azure Migration Project"),
+            "organization_name": os.getenv("ORGANIZATION_NAME", "Your Organization"),
+            "include_vendor_recommendations": os.getenv("INCLUDE_VENDOR_RECOMMENDATIONS", "true").lower() == "true",
+            "generate_timeline_charts": os.getenv("GENERATE_TIMELINE_CHARTS", "true").lower() == "true",
+        }
+    
+    def _initialize_ai_client(self):
+        """Initialize AI client based on .env configuration."""
+        try:
+            # Try Azure OpenAI first
+            azure_api_key = os.getenv('AZURE_OPENAI_API_KEY')
+            azure_endpoint = os.getenv('AZURE_OPENAI_ENDPOINT')
+            azure_api_version = os.getenv('AZURE_OPENAI_API_VERSION', '2024-02-01')
+            
+            if azure_api_key and azure_endpoint:
+                return openai.AzureOpenAI(
+                    api_key=azure_api_key,
+                    api_version=azure_api_version,
+                    azure_endpoint=azure_endpoint
+                )
+            
+            # Fall back to standard OpenAI
+            openai_api_key = os.getenv('OPENAI_API_KEY')
+            if openai_api_key:
+                return openai.OpenAI(api_key=openai_api_key)
+                
+        except Exception as e:
+            print(f"Warning: Could not initialize AI client: {e}")
+            
+        return None
+    
+    def configure_ai_client(self, client=None, api_key=None, endpoint=None, model_name=None):
+        """
+        Configure AI client for content generation.
+        
+        Args:
+            client: Pre-configured AI client
+            api_key: API key for AI service
+            endpoint: Endpoint URL (for Azure OpenAI)
+            model_name: Model name to use for generation
+        """
+        if client:
+            self.ai_client = client
+        elif api_key:
+            try:
+                if endpoint:
+                    # Azure OpenAI
+                    self.ai_client = openai.AzureOpenAI(
+                        api_key=api_key,
+                        api_version="2024-02-01",
+                        azure_endpoint=endpoint
+                    )
+                else:
+                    # Standard OpenAI
+                    self.ai_client = openai.OpenAI(api_key=api_key)
+                    
+                if model_name:
+                    self.model_name = model_name
+                    
+            except Exception as e:
+                print(f"Error configuring AI client: {e}")
+                self.ai_client = None
+    
+    def _generate_ai_content(self, prompt: str, context_data: Dict[str, Any] = None) -> str:
+        """
+        Generate content using AI based on prompt and context data with configuration from .env.
+        
+        Args:
+            prompt: The prompt for content generation
+            context_data: Additional context data to include in the prompt
+            
+        Returns:
+            Generated content as string
+        """
+        if not self.ai_client:
+            return f"[AI Content Generation Unavailable - Please configure AI client]\n{prompt}"
+        
+        try:
+            # Prepare context
+            context_str = ""
+            if context_data:
+                context_str = f"\n\nContext Data:\n{json.dumps(context_data, indent=2, default=str)}"
+            
+            # Customize prompt based on configuration
+            style_instruction = self._get_style_instruction()
+            detail_instruction = self._get_detail_instruction()
+            
+            full_prompt = f"""
+You are an expert Azure migration consultant creating professional migration plan content.
+
+{style_instruction}
+
+{detail_instruction}
+
+{prompt}
+
+Requirements:
+- Generate {self.config['content_style']} content suitable for enterprise migration plans
+- Use specific data from the context when available
+- Include concrete numbers, statistics, and actionable insights
+- Structure content with clear sections and bullet points where appropriate
+- Focus on practical, implementation-ready guidance
+- Organization: {self.config['organization_name']}
+
+{context_str}
+
+Generate the content:
+"""
+            
+            response = self.ai_client.chat.completions.create(
+                model=self.config['ai_model'],
+                messages=[
+                    {"role": "system", "content": "You are an expert Azure migration consultant with deep knowledge of enterprise cloud migrations."},
+                    {"role": "user", "content": full_prompt}
+                ],
+                max_tokens=self.config['ai_max_tokens'],
+                temperature=self.config['ai_temperature']
+            )
+            
+            return response.choices[0].message.content.strip()
+            
+        except Exception as e:
+            return f"[AI Content Generation Error: {str(e)}]\n\nFallback content for: {prompt}"
+    
+    def _get_style_instruction(self) -> str:
+        """Get style instruction based on configuration."""
+        style_instructions = {
+            "professional": "Write in a professional, business-appropriate tone suitable for enterprise stakeholders.",
+            "technical": "Focus on technical details and implementation specifics for IT professionals.",
+            "executive": "Write in a high-level, strategic tone suitable for executive leadership and decision makers."
+        }
+        return style_instructions.get(self.config['content_style'], style_instructions['professional'])
+    
+    def _get_detail_instruction(self) -> str:
+        """Get detail level instruction based on configuration."""
+        detail_instructions = {
+            "summary": "Provide concise, high-level information focusing on key points only.",
+            "standard": "Provide balanced detail with essential information and supporting details.",
+            "comprehensive": "Provide thorough, detailed analysis with comprehensive coverage of all aspects."
+        }
+        return detail_instructions.get(self.config['detail_level'], detail_instructions['comprehensive'])
     
     def generate_migration_plan(
         self, 
         azure_migrate_data: AzureMigrateReport,
         architecture_diagram: ArchitectureDiagram,
         transcript_insights: List[QuestionAnswer],
-        project_name: str = "Azure Migration Project"
+        project_name: str = None
     ) -> AzureMigrationPlan:
         """
         Generate a comprehensive Azure Migration Plan document.
@@ -43,11 +223,15 @@ class AzureMigrationPlanGenerator:
             azure_migrate_data: Parsed Azure Migrate report data
             architecture_diagram: Generated target architecture
             transcript_insights: Q&A insights from transcript analysis
-            project_name: Name of the migration project
+            project_name: Name of the migration project (uses .env DEFAULT_PROJECT_NAME if None)
             
         Returns:
             Complete Azure Migration Plan document
         """
+        
+        # Use configured project name if none provided
+        if project_name is None:
+            project_name = self.config['default_project_name']
         
         # Generate executive summary and business case
         executive_summary = self._generate_executive_summary(azure_migrate_data, project_name)
@@ -65,11 +249,15 @@ class AzureMigrationPlanGenerator:
         # Generate timeline
         migration_timeline = self._generate_migration_timeline(migration_waves)
         
-        # Assess risks
-        risks = self._assess_migration_risks(azure_migrate_data, migration_waves, transcript_insights)
+        # Assess risks (conditional based on config)
+        risks = []
+        if self.config['include_risk_assessment']:
+            risks = self._assess_migration_risks(azure_migrate_data, migration_waves, transcript_insights)
         
-        # Calculate cost estimates
-        cost_estimates = self._calculate_cost_estimates(azure_migrate_data, migration_waves)
+        # Calculate cost estimates (conditional based on config)
+        cost_estimates = []
+        if self.config['include_cost_analysis']:
+            cost_estimates = self._calculate_cost_estimates(azure_migrate_data, migration_waves)
         
         # Generate implementation plans
         resource_plan = self._generate_resource_plan(migration_waves, azure_migrate_data)
@@ -85,13 +273,17 @@ class AzureMigrationPlanGenerator:
         kpis = self._generate_kpis(azure_migrate_data, cost_estimates)
         success_criteria = self._generate_success_criteria(migration_waves, transcript_insights)
         
-        # Create technical specifications
-        technical_specifications = self._generate_technical_specifications(
-            azure_migrate_data, architecture_diagram
-        )
+        # Create technical specifications (conditional based on config)
+        technical_specifications = {}
+        if self.config['include_technical_details']:
+            technical_specifications = self._generate_technical_specifications(
+                azure_migrate_data, architecture_diagram
+            )
         
-        # Identify vendor requirements
-        vendor_requirements = self._identify_vendor_requirements(target_services, transcript_insights)
+        # Identify vendor requirements (conditional based on config)
+        vendor_requirements = []
+        if self.config['include_vendor_recommendations']:
+            vendor_requirements = self._identify_vendor_requirements(target_services, transcript_insights)
         
         # Calculate totals
         total_investment = sum(ce.one_time_migration_cost + ce.azure_monthly_cost * 12 for ce in cost_estimates)
@@ -127,78 +319,134 @@ class AzureMigrationPlanGenerator:
         )
     
     def _generate_executive_summary(self, azure_migrate_data: AzureMigrateReport, project_name: str) -> str:
-        """Generate executive summary section."""
+        """Generate AI-driven executive summary section."""
+        # Prepare data for AI context
         total_servers = len(azure_migrate_data.servers)
         ready_servers = len([s for s in azure_migrate_data.servers if 'ready' in s.readiness.lower()])
         
-        return f"""
-{project_name} Executive Summary
-
-This document outlines the comprehensive migration plan for transitioning {total_servers} on-premises servers to Microsoft Azure. The migration assessment indicates {ready_servers} servers ({ready_servers/total_servers*100:.1f}%) are ready for Azure migration.
-
-Key Highlights:
-• Infrastructure Scale: {total_servers} servers assessed for migration
-• Migration Readiness: {ready_servers} servers ready, {total_servers - ready_servers} require remediation
-• Target Architecture: Modern, scalable, and secure Azure infrastructure
-• Expected Benefits: Improved scalability, enhanced security, reduced operational overhead
-
-Strategic Objectives:
-1. Minimize business disruption during migration
-2. Optimize cost and performance in Azure
-3. Enhance security and compliance posture
-4. Enable future digital transformation initiatives
-
-This migration represents a strategic investment in the organization's digital future, positioning it for enhanced agility, innovation, and competitive advantage in the cloud-first era.
-        """.strip()
-    
-    def _generate_business_case(self, azure_migrate_data: AzureMigrateReport, transcript_insights: List[QuestionAnswer]) -> str:
-        """Generate business case section."""
-        total_monthly_cost = sum(server.estimated_cost for server in azure_migrate_data.servers)
+        # Calculate key metrics
+        total_cost = sum(server.estimated_cost for server in azure_migrate_data.servers)
+        os_breakdown = {}
+        readiness_breakdown = {}
         
-        # Extract business drivers from transcript
-        business_drivers = []
-        for qa in transcript_insights:
-            if any(keyword in qa.question.lower() for keyword in ['business', 'benefit', 'driver', 'reason', 'why']):
-                if qa.answer:
-                    business_drivers.append(qa.answer)
+        for server in azure_migrate_data.servers:
+            # OS distribution
+            os_key = server.operating_system or "Unknown"
+            os_breakdown[os_key] = os_breakdown.get(os_key, 0) + 1
+            
+            # Readiness distribution
+            readiness_key = server.readiness or "Unknown"
+            readiness_breakdown[readiness_key] = readiness_breakdown.get(readiness_key, 0) + 1
         
-        business_case = f"""
-Business Case for Azure Migration
+        context_data = {
+            "project_name": project_name,
+            "total_servers": total_servers,
+            "ready_servers": ready_servers,
+            "readiness_percentage": (ready_servers/total_servers*100) if total_servers > 0 else 0,
+            "estimated_monthly_cost": total_cost,
+            "os_distribution": os_breakdown,
+            "readiness_breakdown": readiness_breakdown,
+            "total_cpu_cores": sum(s.cpu_cores for s in azure_migrate_data.servers),
+            "total_memory_gb": sum(s.memory_gb for s in azure_migrate_data.servers),
+            "total_storage_gb": sum(s.disk_size_gb for s in azure_migrate_data.servers),
+            "applications_identified": sum(len(s.applications) for s in azure_migrate_data.servers)
+        }
+        
+        prompt = f"""
+Create an executive summary for the Azure migration project '{project_name}'. 
 
-Financial Benefits:
-• Estimated Azure monthly cost: ${total_monthly_cost:,.2f}
-• Potential operational savings: 20-30% through automation
-• Capital expenditure reduction: Eliminate hardware refresh cycles
-• Improved resource utilization and rightsizing opportunities
+The executive summary should include:
+1. Project overview and scope
+2. Key migration statistics and readiness assessment
+3. Infrastructure scale and complexity analysis
+4. Strategic objectives and expected benefits
+5. High-level timeline and approach
+6. Business value proposition
 
-Strategic Benefits:
-• Enhanced business agility and scalability
-• Improved disaster recovery and business continuity
-• Access to advanced Azure services and AI capabilities
-• Enhanced security and compliance capabilities
-• Reduced IT operational overhead
-
-Business Drivers Identified:
+Use the provided context data to create specific, data-driven content. Include concrete numbers and percentages where relevant.
+Make it compelling for executive stakeholders while being technically accurate.
 """
         
-        for i, driver in enumerate(business_drivers[:5], 1):  # Top 5 drivers
-            business_case += f"• {driver}\n"
+        return self._generate_ai_content(prompt, context_data)
+    
+    def _generate_business_case(self, azure_migrate_data: AzureMigrateReport, transcript_insights: List[QuestionAnswer]) -> str:
+        """Generate AI-driven business case section."""
+        total_monthly_cost = sum(server.estimated_cost for server in azure_migrate_data.servers)
         
-        business_case += """
-Risk Mitigation:
-• Reduced dependency on aging on-premises infrastructure
-• Enhanced data protection and backup capabilities
-• Improved regulatory compliance posture
-• Better disaster recovery options
+        # Extract insights from transcript
+        business_drivers = []
+        pain_points = []
+        compliance_requirements = []
+        
+        for qa in transcript_insights:
+            question_lower = qa.question.lower()
+            answer_lower = qa.answer.lower() if qa.answer else ""
+            
+            if any(keyword in question_lower for keyword in ['business', 'benefit', 'driver', 'reason', 'why', 'goal']):
+                if qa.answer and len(qa.answer) > 10:
+                    business_drivers.append(qa.answer)
+            
+            if any(keyword in question_lower for keyword in ['problem', 'issue', 'challenge', 'pain', 'difficulty']):
+                if qa.answer and len(qa.answer) > 10:
+                    pain_points.append(qa.answer)
+                    
+            if any(keyword in question_lower for keyword in ['compliance', 'regulation', 'audit', 'security', 'governance']):
+                if qa.answer and len(qa.answer) > 10:
+                    compliance_requirements.append(qa.answer)
+        
+        # Calculate infrastructure metrics
+        server_ages = []
+        legacy_systems = 0
+        for server in azure_migrate_data.servers:
+            if any(old_os in server.operating_system.lower() for old_os in ['2008', '2012', 'xp', 'vista']):
+                legacy_systems += 1
+        
+        context_data = {
+            "total_servers": len(azure_migrate_data.servers),
+            "estimated_monthly_cost": total_monthly_cost,
+            "annual_cost_estimate": total_monthly_cost * 12,
+            "business_drivers": business_drivers[:5],  # Top 5
+            "pain_points": pain_points[:5],
+            "compliance_requirements": compliance_requirements,
+            "legacy_systems_count": legacy_systems,
+            "legacy_percentage": (legacy_systems / len(azure_migrate_data.servers) * 100) if azure_migrate_data.servers else 0,
+            "total_cpu_cores": sum(s.cpu_cores for s in azure_migrate_data.servers),
+            "total_memory_gb": sum(s.memory_gb for s in azure_migrate_data.servers),
+            "applications_count": sum(len(s.applications) for s in azure_migrate_data.servers),
+            "readiness_stats": {
+                "ready": len([s for s in azure_migrate_data.servers if 'ready' in s.readiness.lower()]),
+                "not_ready": len([s for s in azure_migrate_data.servers if 'not ready' in s.readiness.lower()]),
+                "conditional": len([s for s in azure_migrate_data.servers if 'conditional' in s.readiness.lower()])
+            }
+        }
+        
+        prompt = """
+Create a comprehensive business case for Azure migration that includes:
 
-Return on Investment:
-• Expected ROI within 18-24 months
-• Ongoing operational savings of 20-30%
-• Improved staff productivity and focus on strategic initiatives
-• Enhanced innovation capabilities through cloud services
-        """
+1. Executive Summary of Business Need
+2. Current State Challenges and Pain Points
+3. Financial Benefits Analysis
+   - Cost savings opportunities
+   - ROI projections
+   - Capital vs operational expenditure analysis
+4. Strategic Benefits
+   - Business agility improvements
+   - Innovation enablement
+   - Competitive advantages
+5. Risk Mitigation
+   - Infrastructure modernization benefits
+   - Security and compliance improvements
+   - Business continuity enhancements
+6. Implementation Investment
+   - Migration costs
+   - Timeline considerations
+   - Resource requirements
+
+Use the provided data to create specific, quantified benefits. Include percentage improvements, cost figures, and timeline estimates based on the infrastructure assessment data.
+Focus on business value and ROI to justify the migration investment.
+"""
         
-        return business_case.strip()
+        return self._generate_ai_content(prompt, context_data)
     
     def _analyze_current_infrastructure(self, azure_migrate_data: AzureMigrateReport) -> Dict[str, Any]:
         """Analyze current infrastructure state."""
@@ -449,56 +697,172 @@ Return on Investment:
         )
     
     def _assess_migration_risks(self, azure_migrate_data: AzureMigrateReport, migration_waves: List[MigrationWave], transcript_insights: List[QuestionAnswer]) -> List[MigrationRisk]:
-        """Assess migration risks."""
-        risks = []
+        """Generate AI-driven migration risk assessment."""
         
-        # Technical risks
+        # Analyze current infrastructure for risk factors
         not_ready_servers = [s for s in azure_migrate_data.servers if 'not ready' in s.readiness.lower()]
-        if not_ready_servers:
-            risks.append(MigrationRisk(
-                risk_id="TECH-001",
-                description=f"{len(not_ready_servers)} servers are not ready for migration due to compatibility issues",
-                impact="High",
-                probability="High",
-                mitigation="Conduct detailed compatibility assessment and remediation plan",
-                owner="Technical Team",
-                category="Technical"
-            ))
+        conditional_servers = [s for s in azure_migrate_data.servers if 'conditional' in s.readiness.lower()]
+        legacy_systems = [s for s in azure_migrate_data.servers if any(old in s.operating_system.lower() for old in ['2008', '2012', 'xp'])]
         
-        # Business continuity risks
+        # Extract risk-related insights from transcript
+        risk_concerns = []
+        business_criticality = []
+        compliance_issues = []
+        
+        for qa in transcript_insights:
+            question_lower = qa.question.lower()
+            
+            if any(keyword in question_lower for keyword in ['risk', 'concern', 'worry', 'problem', 'issue']):
+                if qa.answer and len(qa.answer) > 10:
+                    risk_concerns.append(qa.answer)
+                    
+            if any(keyword in question_lower for keyword in ['critical', 'important', 'business', 'downtime']):
+                if qa.answer and len(qa.answer) > 10:
+                    business_criticality.append(qa.answer)
+                    
+            if any(keyword in question_lower for keyword in ['compliance', 'regulation', 'audit', 'security']):
+                if qa.answer and len(qa.answer) > 10:
+                    compliance_issues.append(qa.answer)
+        
+        # Calculate risk metrics
         high_risk_waves = [w for w in migration_waves if w.risk_level in ["High", "Critical"]]
-        if high_risk_waves:
+        complex_applications = sum(len(s.applications) for s in azure_migrate_data.servers)
+        
+        context_data = {
+            "total_servers": len(azure_migrate_data.servers),
+            "not_ready_servers": len(not_ready_servers),
+            "conditional_servers": len(conditional_servers),
+            "legacy_systems": len(legacy_systems),
+            "migration_waves_count": len(migration_waves),
+            "high_risk_waves": len(high_risk_waves),
+            "complex_applications": complex_applications,
+            "risk_concerns": risk_concerns,
+            "business_criticality": business_criticality,
+            "compliance_issues": compliance_issues,
+            "server_details": [
+                {
+                    "name": s.server_name,
+                    "os": s.operating_system,
+                    "readiness": s.readiness,
+                    "applications": len(s.applications),
+                    "warnings": s.warnings
+                } for s in azure_migrate_data.servers[:10]  # Sample of servers
+            ],
+            "wave_details": [
+                {
+                    "name": w.name,
+                    "risk_level": w.risk_level,
+                    "server_count": len(w.servers),
+                    "duration_weeks": w.duration_weeks
+                } for w in migration_waves
+            ]
+        }
+        
+        prompt = """
+Conduct a comprehensive risk assessment for the Azure migration project and generate specific migration risks.
+
+Analyze the provided data and create risks covering these categories:
+1. Technical Risks (compatibility, performance, integration)
+2. Business Risks (operations, continuity, stakeholder)
+3. Security Risks (data protection, access, compliance)
+4. Operational Risks (skills, process, management)
+
+For each risk, provide:
+- Unique risk ID (format: CATEGORY-###, e.g., TECH-001)
+- Detailed description of the risk
+- Impact level (Low, Medium, High, Critical)
+- Probability (Low, Medium, High)
+- Specific mitigation strategies
+- Risk owner/responsible party
+- Risk category
+
+Focus on data-driven risks based on the server assessment, readiness issues, and stakeholder concerns.
+Be specific about the migration context and provide actionable mitigation strategies.
+
+Return the response as a JSON array of risk objects with the structure:
+{
+    "risk_id": "TECH-001",
+    "description": "detailed description",
+    "impact": "High",
+    "probability": "Medium", 
+    "mitigation": "specific mitigation strategy",
+    "owner": "responsible party",
+    "category": "Technical"
+}
+"""
+        
+        generated_content = self._generate_ai_content(prompt, context_data)
+        
+        # Parse AI-generated risks
+        risks = []
+        try:
+            # Try to parse JSON response
+            import json
+            risk_data = json.loads(generated_content)
+            
+            for risk_item in risk_data:
+                if isinstance(risk_item, dict) and all(key in risk_item for key in ['risk_id', 'description', 'impact', 'probability', 'mitigation', 'owner', 'category']):
+                    risks.append(MigrationRisk(
+                        risk_id=risk_item['risk_id'],
+                        description=risk_item['description'],
+                        impact=risk_item['impact'],
+                        probability=risk_item['probability'],
+                        mitigation=risk_item['mitigation'],
+                        owner=risk_item['owner'],
+                        category=risk_item['category']
+                    ))
+                    
+        except (json.JSONDecodeError, KeyError):
+            # Fallback: parse text-based response or create default risks
+            pass
+        
+        # If AI parsing failed, add some data-driven default risks
+        if len(risks) == 0:
+            # Technical risks based on readiness
+            if not_ready_servers:
+                risks.append(MigrationRisk(
+                    risk_id="TECH-001",
+                    description=f"{len(not_ready_servers)} servers are not ready for migration due to compatibility issues",
+                    impact="High",
+                    probability="High",
+                    mitigation="Conduct detailed compatibility assessment and remediation plan",
+                    owner="Technical Team",
+                    category="Technical"
+                ))
+            
+            # Business continuity risks
+            if high_risk_waves:
+                risks.append(MigrationRisk(
+                    risk_id="BUS-001",
+                    description="Business disruption during complex system migration",
+                    impact="High",
+                    probability="Medium",
+                    mitigation="Implement comprehensive rollback procedures and extended maintenance windows",
+                    owner="Business Owner",
+                    category="Business"
+                ))
+            
+            # Security risks
             risks.append(MigrationRisk(
-                risk_id="BUS-001",
-                description="Business disruption during complex system migration",
-                impact="High",
-                probability="Medium",
-                mitigation="Implement comprehensive rollback procedures and extended maintenance windows",
-                owner="Business Owner",
-                category="Business"
+                risk_id="SEC-001",
+                description="Data exposure during migration process",
+                impact="Critical",
+                probability="Low",
+                mitigation="Implement encryption in transit and at rest, conduct security assessments",
+                owner="Security Team",
+                category="Security"
             ))
-        
-        # Security risks
-        risks.append(MigrationRisk(
-            risk_id="SEC-001",
-            description="Data exposure during migration process",
-            impact="Critical",
-            probability="Low",
-            mitigation="Implement encryption in transit and at rest, conduct security assessments",
-            owner="Security Team",
-            category="Security"
-        ))
-        
-        # Operational risks
-        risks.append(MigrationRisk(
-            risk_id="OPS-001",
-            description="Skills gap in Azure technologies",
-            impact="Medium",
-            probability="Medium",
-            mitigation="Conduct comprehensive training program and engage Azure consulting partners",
-            owner="Operations Manager",
-            category="Operational"
-        ))
+            
+            # Operational risks
+            risks.append(MigrationRisk(
+                risk_id="OPS-001",
+                description="Skills gap in Azure technologies",
+                impact="Medium",
+                probability="Medium",
+                mitigation="Conduct comprehensive training program and engage Azure consulting partners",
+                owner="Operations Manager",
+                category="Operational"
+            ))
         
         return risks
     
@@ -598,55 +962,265 @@ Return on Investment:
             return "32+ GB"
     
     def _determine_migration_approach(self, azure_migrate_data: AzureMigrateReport, transcript_insights: List[QuestionAnswer]) -> str:
-        """Determine overall migration approach."""
-        # Analyze transcript for migration preferences
+        """Determine overall migration approach using AI analysis."""
+        
+        # Prepare infrastructure analysis
+        infrastructure_summary = self._prepare_infrastructure_summary(azure_migrate_data)
+        business_insights = self._extract_business_insights(transcript_insights)
+        
+        # Analyze approach preferences from transcript
         approach_keywords = {
-            "lift-and-shift": ["rehost", "lift", "shift", "minimal changes"],
-            "modernize": ["modernize", "refactor", "paas", "platform"],
-            "rearchitect": ["rearchitect", "rebuild", "cloud-native", "containerize"]
+            "lift-and-shift": ["rehost", "lift", "shift", "minimal changes", "quick", "fast", "simple"],
+            "modernize": ["modernize", "refactor", "paas", "platform", "optimize", "improve"],
+            "rearchitect": ["rearchitect", "rebuild", "cloud-native", "containerize", "microservices", "serverless"]
         }
         
         approach_scores = {"lift-and-shift": 0, "modernize": 0, "rearchitect": 0}
         
         for qa in transcript_insights:
-            content = (qa.question + " " + qa.answer).lower()
+            content = (qa.question + " " + (qa.answer or "")).lower()
             for approach, keywords in approach_keywords.items():
                 for keyword in keywords:
                     if keyword in content:
                         approach_scores[approach] += 1
         
-        # Default to balanced approach if no clear preference
-        primary_approach = max(approach_scores, key=approach_scores.get)
+        context_data = {
+            "infrastructure_summary": infrastructure_summary,
+            "business_insights": business_insights,
+            "approach_preferences": approach_scores,
+            "migration_readiness": {
+                "ready_percentage": (infrastructure_summary["readiness_distribution"].get("Ready", 0) / infrastructure_summary["total_servers"] * 100) if infrastructure_summary["total_servers"] > 0 else 0,
+                "complexity_breakdown": infrastructure_summary["server_complexity"],
+                "legacy_systems": sum(1 for os_name in infrastructure_summary["os_distribution"] if any(old in os_name.lower() for old in ['2008', '2012', 'xp']))
+            },
+            "business_priorities": business_insights.get("business_drivers", []),
+            "technical_constraints": business_insights.get("technical_requirements", []),
+            "timeline_pressure": business_insights.get("timeline_constraints", [])
+        }
         
-        return f"Hybrid approach with primary focus on {primary_approach}"
+        prompt = """
+Analyze the migration data and determine the optimal migration approach strategy.
+
+Consider these factors:
+1. Infrastructure readiness and complexity
+2. Business drivers and timeline requirements
+3. Stakeholder preferences expressed in discussions
+4. Technical constraints and capabilities
+5. Risk tolerance and transformation goals
+
+Available migration approaches:
+- Lift-and-Shift (Rehost): Minimal changes, fastest migration
+- Modernize (Refactor): Optimize for cloud, moderate transformation
+- Rearchitect (Rebuild): Full cloud-native transformation
+
+Provide a recommendation that includes:
+1. Primary migration approach (and percentage focus)
+2. Secondary approaches for specific workloads (if applicable)
+3. Justification based on the analysis
+4. Specific recommendations for different server categories
+
+Format the response as a clear migration strategy statement with supporting rationale.
+"""
+        
+        ai_response = self._generate_ai_content(prompt, context_data)
+        
+        # If AI fails, fall back to scoring-based approach
+        if not ai_response or ai_response.startswith("[AI"):
+            primary_approach = max(approach_scores, key=approach_scores.get) if any(approach_scores.values()) else "lift-and-shift"
+            return f"Hybrid approach with primary focus on {primary_approach}"
+        
+        return ai_response
     
     def _generate_assumptions(self, transcript_insights: List[QuestionAnswer]) -> List[str]:
-        """Generate project assumptions."""
-        return [
-            "Azure subscription and necessary permissions will be available",
-            "Network connectivity between on-premises and Azure will be established",
-            "Business stakeholders will provide necessary approvals for maintenance windows",
-            "Sufficient budget allocation for migration tools and Azure resources",
-            "Technical team will receive appropriate Azure training",
-            "Current server performance baselines are representative of production load",
-            "No major application changes will be required during migration timeframe"
-        ]
+        """Generate AI-driven project assumptions."""
+        # Extract relevant information from transcript
+        infrastructure_details = []
+        business_context = []
+        technical_requirements = []
+        
+        for qa in transcript_insights:
+            question_lower = qa.question.lower()
+            
+            if any(keyword in question_lower for keyword in ['infrastructure', 'network', 'connectivity', 'environment']):
+                if qa.answer and len(qa.answer) > 10:
+                    infrastructure_details.append(qa.answer)
+            
+            if any(keyword in question_lower for keyword in ['business', 'process', 'timeline', 'budget', 'resource']):
+                if qa.answer and len(qa.answer) > 10:
+                    business_context.append(qa.answer)
+                    
+            if any(keyword in question_lower for keyword in ['technical', 'application', 'system', 'requirement']):
+                if qa.answer and len(qa.answer) > 10:
+                    technical_requirements.append(qa.answer)
+        
+        context_data = {
+            "infrastructure_details": infrastructure_details,
+            "business_context": business_context,
+            "technical_requirements": technical_requirements,
+            "qa_insights": [{"question": qa.question, "answer": qa.answer} for qa in transcript_insights[:10]]
+        }
+        
+        prompt = """
+Generate a comprehensive list of project assumptions for the Azure migration. 
+
+Create assumptions covering:
+1. Infrastructure and Technical Assumptions
+2. Business and Organizational Assumptions  
+3. Security and Compliance Assumptions
+4. Timeline and Resource Assumptions
+5. Financial and Budgetary Assumptions
+
+Each assumption should be:
+- Specific and actionable
+- Based on the provided context where possible
+- Realistic for enterprise migration projects
+- Clear about dependencies and prerequisites
+
+Return the assumptions as a Python list of strings, with each assumption being a clear, complete sentence.
+Format: Return only the list, no additional text.
+"""
+        
+        generated_content = self._generate_ai_content(prompt, context_data)
+        
+        # Parse the generated content to extract list items
+        try:
+            # Try to extract assumptions from the generated content
+            lines = generated_content.split('\n')
+            assumptions = []
+            
+            for line in lines:
+                line = line.strip()
+                if line and (line.startswith('•') or line.startswith('-') or line.startswith('*')):
+                    assumptions.append(line.lstrip('•-*').strip())
+                elif line and len(line) > 20 and not line.startswith('['):  # Skip headers and short lines
+                    assumptions.append(line)
+            
+            # If we couldn't parse properly, return fallback assumptions
+            if len(assumptions) < 5:
+                assumptions = [
+                    "Azure subscription and necessary permissions will be available",
+                    "Network connectivity between on-premises and Azure will be established",
+                    "Business stakeholders will provide necessary approvals for maintenance windows",
+                    "Sufficient budget allocation for migration tools and Azure resources",
+                    "Technical team will receive appropriate Azure training",
+                    "Current server performance baselines are representative of production load",
+                    "No major application changes will be required during migration timeframe"
+                ]
+                
+            return assumptions[:15]  # Limit to 15 assumptions
+            
+        except Exception:
+            # Fallback to default assumptions
+            return [
+                "Azure subscription and necessary permissions will be available",
+                "Network connectivity between on-premises and Azure will be established",
+                "Business stakeholders will provide necessary approvals for maintenance windows",
+                "Sufficient budget allocation for migration tools and Azure resources",
+                "Technical team will receive appropriate Azure training"
+            ]
     
     def _generate_constraints(self, transcript_insights: List[QuestionAnswer]) -> List[str]:
-        """Generate project constraints."""
-        constraints = [
-            "Limited maintenance windows for production systems",
-            "Compliance requirements must be maintained throughout migration",
-            "No data loss tolerance for critical business applications"
-        ]
+        """Generate AI-driven project constraints."""
+        # Extract constraint-related information from transcript
+        business_constraints = []
+        technical_constraints = []
+        compliance_constraints = []
+        timeline_constraints = []
         
-        # Extract specific constraints from transcript
         for qa in transcript_insights:
-            if any(keyword in qa.question.lower() for keyword in ['constraint', 'limitation', 'requirement', 'compliance']):
+            question_lower = qa.question.lower()
+            answer_lower = qa.answer.lower() if qa.answer else ""
+            
+            if any(keyword in question_lower for keyword in ['constraint', 'limitation', 'restriction', 'cannot', 'must not']):
                 if qa.answer and len(qa.answer) > 10:
-                    constraints.append(qa.answer)
+                    business_constraints.append(qa.answer)
+            
+            if any(keyword in question_lower for keyword in ['downtime', 'maintenance', 'window', 'availability']):
+                if qa.answer and len(qa.answer) > 10:
+                    timeline_constraints.append(qa.answer)
+                    
+            if any(keyword in question_lower for keyword in ['compliance', 'regulation', 'audit', 'security', 'policy']):
+                if qa.answer and len(qa.answer) > 10:
+                    compliance_constraints.append(qa.answer)
+                    
+            if any(keyword in question_lower for keyword in ['technical', 'system', 'application', 'dependency']):
+                if qa.answer and len(qa.answer) > 10:
+                    technical_constraints.append(qa.answer)
         
-        return constraints[:10]  # Limit to top 10
+        context_data = {
+            "business_constraints": business_constraints,
+            "technical_constraints": technical_constraints,
+            "compliance_constraints": compliance_constraints,
+            "timeline_constraints": timeline_constraints,
+            "all_qa_insights": [{"question": qa.question, "answer": qa.answer} for qa in transcript_insights if qa.answer]
+        }
+        
+        prompt = """
+Generate a comprehensive list of project constraints for the Azure migration project.
+
+Create constraints covering:
+1. Business and Operational Constraints
+2. Technical and System Constraints  
+3. Security and Compliance Constraints
+4. Timeline and Resource Constraints
+5. Financial and Budgetary Constraints
+
+Each constraint should be:
+- Specific and measurable where possible
+- Based on the provided context and insights
+- Realistic for enterprise environments
+- Clear about limitations and restrictions
+
+Focus on constraints that will impact the migration project planning, execution, and success.
+Return the constraints as a Python list of strings, with each constraint being a clear, complete sentence.
+Format: Return only the list, no additional text.
+"""
+        
+        generated_content = self._generate_ai_content(prompt, context_data)
+        
+        # Parse the generated content to extract constraint items
+        try:
+            lines = generated_content.split('\n')
+            constraints = []
+            
+            for line in lines:
+                line = line.strip()
+                if line and (line.startswith('•') or line.startswith('-') or line.startswith('*')):
+                    constraints.append(line.lstrip('•-*').strip())
+                elif line and len(line) > 20 and not line.startswith('['):  # Skip headers and short lines
+                    constraints.append(line)
+            
+            # If we couldn't parse properly, return fallback constraints with extracted insights
+            if len(constraints) < 3:
+                constraints = [
+                    "Limited maintenance windows for production systems",
+                    "Compliance requirements must be maintained throughout migration",
+                    "No data loss tolerance for critical business applications"
+                ]
+                
+                # Add specific constraints from transcript
+                for qa in transcript_insights:
+                    if any(keyword in qa.question.lower() for keyword in ['constraint', 'limitation', 'requirement', 'compliance']):
+                        if qa.answer and len(qa.answer) > 10:
+                            constraints.append(qa.answer)
+                            
+            return constraints[:10]  # Limit to top 10
+            
+        except Exception:
+            # Fallback constraints
+            fallback_constraints = [
+                "Limited maintenance windows for production systems",
+                "Compliance requirements must be maintained throughout migration",
+                "No data loss tolerance for critical business applications"
+            ]
+            
+            # Add specific constraints from transcript
+            for qa in transcript_insights:
+                if any(keyword in qa.question.lower() for keyword in ['constraint', 'limitation', 'requirement', 'compliance']):
+                    if qa.answer and len(qa.answer) > 10:
+                        fallback_constraints.append(qa.answer)
+                        
+            return fallback_constraints[:10]
     
     def _generate_resource_plan(self, migration_waves: List[MigrationWave], azure_migrate_data: AzureMigrateReport) -> Dict[str, Any]:
         """Generate resource allocation plan."""
@@ -683,30 +1257,132 @@ Return on Investment:
         }
     
     def _generate_training_plan(self, target_services: List[Dict[str, Any]], transcript_insights: List[QuestionAnswer]) -> Dict[str, Any]:
-        """Generate comprehensive training plan."""
+        """Generate AI-driven comprehensive training plan."""
+        
+        # Extract training-related insights
+        skill_gaps = []
+        team_details = []
+        current_expertise = []
+        
+        for qa in transcript_insights:
+            question_lower = qa.question.lower()
+            
+            if any(keyword in question_lower for keyword in ['skill', 'training', 'knowledge', 'experience', 'expertise']):
+                if qa.answer and len(qa.answer) > 10:
+                    if any(gap_word in question_lower for gap_word in ['gap', 'lack', 'need', 'missing']):
+                        skill_gaps.append(qa.answer)
+                    else:
+                        current_expertise.append(qa.answer)
+                        
+            if any(keyword in question_lower for keyword in ['team', 'staff', 'people', 'resource', 'role']):
+                if qa.answer and len(qa.answer) > 10:
+                    team_details.append(qa.answer)
+        
+        # Analyze Azure services for training requirements
+        azure_services = set()
+        migration_complexity = "Medium"
+        
+        for service in target_services:
+            service_name = service.get("service_name", "")
+            azure_services.add(service_name)
+            
+            # Assess complexity based on services
+            if any(complex_service in service_name for complex_service in ["Kubernetes", "Container", "Functions", "Cosmos"]):
+                migration_complexity = "High"
+        
+        context_data = {
+            "target_azure_services": list(azure_services),
+            "migration_complexity": migration_complexity,
+            "skill_gaps_identified": skill_gaps,
+            "current_team_expertise": current_expertise,
+            "team_details": team_details,
+            "service_analysis": target_services,
+            "total_services": len(target_services),
+            "training_categories_needed": list(set([
+                service.get("migration_strategy", "lift-and-shift") for service in target_services
+            ]))
+        }
+        
+        prompt = """
+Create a comprehensive training plan for the Azure migration project team.
+
+Design training programs covering:
+1. Azure Fundamentals (for all team members)
+2. Azure Administration and Operations 
+3. Migration-Specific Tools and Processes
+4. Service-Specific Training (based on target Azure services)
+5. Security and Compliance Training
+6. Ongoing Enablement and Knowledge Transfer
+
+For each training program, specify:
+- Target audience and prerequisites
+- Duration and delivery method
+- Detailed learning objectives and content outline
+- Hands-on labs and practical exercises
+- Assessment and certification requirements
+- Timeline and scheduling considerations
+- Training providers and resources
+
+Consider the current skill gaps, team expertise, and complexity of the target Azure services.
+Create a realistic timeline that supports the migration project schedule.
+
+Return the response as a structured JSON object with training programs as keys.
+"""
+        
+        generated_content = self._generate_ai_content(prompt, context_data)
+        
+        # Try to parse AI response, fallback to structured default if needed
+        try:
+            import json
+            training_plan = json.loads(generated_content)
+            
+            # Validate the structure
+            if isinstance(training_plan, dict) and len(training_plan) > 0:
+                return training_plan
+                
+        except (json.JSONDecodeError, TypeError):
+            pass
+        
+        # Fallback to enhanced default training plan
         return {
             "azure_fundamentals": {
                 "target_audience": "All project team members",
                 "duration": "2 days",
                 "delivery": "Instructor-led or online",
-                "content": ["Azure basics", "Core services", "Pricing and support"]
+                "content": ["Azure basics", "Core services", "Pricing and support"],
+                "prerequisites": "Basic IT infrastructure knowledge",
+                "certification": "Azure Fundamentals (AZ-900)"
             },
             "azure_administration": {
                 "target_audience": "IT Operations team",
                 "duration": "5 days",
                 "delivery": "Hands-on workshop",
-                "content": ["Resource management", "Monitoring and alerts", "Security configuration"]
+                "content": ["Resource management", "Monitoring and alerts", "Security configuration"],
+                "prerequisites": "Azure Fundamentals completion",
+                "certification": "Azure Administrator Associate (AZ-104)"
             },
             "migration_specific": {
                 "target_audience": "Migration team",
-                "duration": "3 days",
+                "duration": "3 days", 
                 "delivery": "Hands-on workshop",
-                "content": ["Azure Migrate tools", "Migration best practices", "Troubleshooting"]
+                "content": ["Azure Migrate tools", "Migration best practices", "Troubleshooting"],
+                "prerequisites": "Azure administration basics",
+                "certification": "Hands-on migration certification"
+            },
+            "service_specific": {
+                "target_audience": "Technical specialists",
+                "duration": "Variable based on services",
+                "delivery": "Targeted workshops",
+                "content": [f"Training for {service}" for service in azure_services],
+                "prerequisites": "Service-specific knowledge",
+                "certification": "Service-specific certifications"
             },
             "ongoing_enablement": {
                 "description": "Monthly knowledge sharing sessions",
                 "duration": "2 hours per month",
-                "content": "New Azure features, lessons learned, best practices"
+                "content": "New Azure features, lessons learned, best practices",
+                "target_audience": "All technical team members",
+                "delivery": "Virtual sessions"
             }
         }
     
@@ -964,3 +1640,121 @@ Return on Investment:
             return "High (1-3 months)"
         else:
             return "Very High (3+ months)"
+    
+    def _prepare_infrastructure_summary(self, azure_migrate_data: AzureMigrateReport) -> Dict[str, Any]:
+        """Prepare a comprehensive summary of the infrastructure for AI context."""
+        servers = azure_migrate_data.servers
+        
+        # OS distribution
+        os_dist = {}
+        readiness_dist = {}
+        app_count_dist = {"0": 0, "1-3": 0, "4-10": 0, "10+": 0}
+        complexity_dist = {"low": 0, "medium": 0, "high": 0}
+        
+        total_warnings = 0
+        
+        for server in servers:
+            # OS distribution
+            os_key = server.operating_system or "Unknown"
+            os_dist[os_key] = os_dist.get(os_key, 0) + 1
+            
+            # Readiness distribution
+            readiness_key = server.readiness or "Unknown"
+            readiness_dist[readiness_key] = readiness_dist.get(readiness_key, 0) + 1
+            
+            # Application complexity
+            app_count = len(server.applications)
+            if app_count == 0:
+                app_count_dist["0"] += 1
+            elif app_count <= 3:
+                app_count_dist["1-3"] += 1
+            elif app_count <= 10:
+                app_count_dist["4-10"] += 1
+            else:
+                app_count_dist["10+"] += 1
+            
+            # Server complexity
+            complexity = self._calculate_server_complexity(server)
+            if complexity <= 3:
+                complexity_dist["low"] += 1
+            elif complexity <= 6:
+                complexity_dist["medium"] += 1
+            else:
+                complexity_dist["high"] += 1
+                
+            total_warnings += len(server.warnings)
+        
+        return {
+            "total_servers": len(servers),
+            "os_distribution": os_dist,
+            "readiness_distribution": readiness_dist,
+            "application_complexity": app_count_dist,
+            "server_complexity": complexity_dist,
+            "total_warnings": total_warnings,
+            "infrastructure_totals": {
+                "total_cpu_cores": sum(s.cpu_cores for s in servers),
+                "total_memory_gb": sum(s.memory_gb for s in servers),
+                "total_storage_gb": sum(s.disk_size_gb for s in servers),
+                "total_estimated_cost": sum(s.estimated_cost for s in servers)
+            },
+            "top_warnings": self._get_top_warnings(servers),
+            "critical_servers": [
+                {"name": s.server_name, "readiness": s.readiness, "warnings": len(s.warnings)}
+                for s in servers if 'not ready' in s.readiness.lower() or len(s.warnings) > 3
+            ][:5]
+        }
+    
+    def _get_top_warnings(self, servers: List[AzureMigrateServer]) -> List[str]:
+        """Extract top warnings across all servers."""
+        warning_counts = {}
+        
+        for server in servers:
+            for warning in server.warnings:
+                warning_counts[warning] = warning_counts.get(warning, 0) + 1
+        
+        # Sort by frequency and return top 10
+        sorted_warnings = sorted(warning_counts.items(), key=lambda x: x[1], reverse=True)
+        return [warning for warning, count in sorted_warnings[:10]]
+    
+    def _extract_business_insights(self, transcript_insights: List[QuestionAnswer]) -> Dict[str, List[str]]:
+        """Extract categorized business insights from transcript."""
+        insights = {
+            "business_drivers": [],
+            "pain_points": [],
+            "compliance_requirements": [],
+            "timeline_constraints": [],
+            "budget_considerations": [],
+            "technical_requirements": [],
+            "security_concerns": [],
+            "stakeholder_priorities": []
+        }
+        
+        for qa in transcript_insights:
+            if not qa.answer or len(qa.answer) < 10:
+                continue
+                
+            question_lower = qa.question.lower()
+            
+            # Categorize based on question content
+            if any(keyword in question_lower for keyword in ['business', 'benefit', 'driver', 'goal', 'objective']):
+                insights["business_drivers"].append(qa.answer)
+            elif any(keyword in question_lower for keyword in ['problem', 'issue', 'challenge', 'pain', 'difficulty']):
+                insights["pain_points"].append(qa.answer)
+            elif any(keyword in question_lower for keyword in ['compliance', 'regulation', 'audit', 'policy']):
+                insights["compliance_requirements"].append(qa.answer)
+            elif any(keyword in question_lower for keyword in ['timeline', 'schedule', 'deadline', 'when', 'time']):
+                insights["timeline_constraints"].append(qa.answer)
+            elif any(keyword in question_lower for keyword in ['budget', 'cost', 'money', 'funding', 'investment']):
+                insights["budget_considerations"].append(qa.answer)
+            elif any(keyword in question_lower for keyword in ['technical', 'technology', 'system', 'application']):
+                insights["technical_requirements"].append(qa.answer)
+            elif any(keyword in question_lower for keyword in ['security', 'secure', 'protection', 'access', 'encryption']):
+                insights["security_concerns"].append(qa.answer)
+            elif any(keyword in question_lower for keyword in ['priority', 'important', 'critical', 'key', 'essential']):
+                insights["stakeholder_priorities"].append(qa.answer)
+        
+        # Limit each category to top 5 items
+        for category in insights:
+            insights[category] = insights[category][:5]
+            
+        return insights

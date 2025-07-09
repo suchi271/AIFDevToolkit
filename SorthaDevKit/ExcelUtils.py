@@ -12,7 +12,7 @@ class ExcelProcessor:
     @staticmethod
     def read_questions_from_excel(file_path: str, question_column: str = 'Question', sheet_name: str = None) -> List[str]:
         """
-        Read questions from an Excel file.
+        Read questions from an Excel file with improved error handling and multiple engine support.
         
         Args:
             file_path: Path to the Excel file
@@ -23,10 +23,43 @@ class ExcelProcessor:
             List of questions
         """
         try:
-            if sheet_name:
-                df = pd.read_excel(file_path, sheet_name=sheet_name)
+            # Determine which engine to use based on file extension
+            # xlrd 2.0+ only supports .xls files, openpyxl handles .xlsx
+            file_ext = os.path.splitext(file_path)[1].lower()
+            
+            if file_ext == '.xlsx':
+                # For .xlsx files, use openpyxl engine
+                engines = ['openpyxl']
+            elif file_ext == '.xls':
+                # For .xls files, use xlrd engine
+                engines = ['xlrd']
             else:
-                df = pd.read_excel(file_path)
+                # For other extensions, try both
+                engines = ['openpyxl', 'xlrd']
+            
+            df = None
+            last_error = None
+            
+            for engine in engines:
+                try:
+                    if sheet_name:
+                        df = pd.read_excel(file_path, sheet_name=sheet_name, engine=engine)
+                    else:
+                        df = pd.read_excel(file_path, engine=engine)
+                    break  # Success, break out of loop
+                except Exception as e:
+                    last_error = e
+                    continue
+            
+            if df is None:
+                # If specific engines failed, try without specifying engine (let pandas decide)
+                try:
+                    if sheet_name:
+                        df = pd.read_excel(file_path, sheet_name=sheet_name)
+                    else:
+                        df = pd.read_excel(file_path)
+                except Exception as e:
+                    raise Exception(f"Failed to read Excel file {file_path}. File extension: {file_ext}. Last error: {str(last_error)}")
             
             # Handle different possible column names
             possible_columns = [question_column, 'Questions', 'Question', 'questions', 'QUESTION']
@@ -59,8 +92,37 @@ class ExcelProcessor:
             AzureMigrateReport object with parsed data
         """
         try:
-            # Read all sheets from the Excel file
-            excel_file = pd.ExcelFile(file_path)
+            # Determine which engine to use based on file extension
+            # xlrd 2.0+ only supports .xls files, openpyxl handles .xlsx
+            file_ext = os.path.splitext(file_path)[1].lower()
+            
+            if file_ext == '.xlsx':
+                # For .xlsx files, use openpyxl engine
+                engines = ['openpyxl']
+            elif file_ext == '.xls':
+                # For .xls files, use xlrd engine
+                engines = ['xlrd']
+            else:
+                # For other extensions, try both
+                engines = ['openpyxl', 'xlrd']
+            
+            excel_file = None
+            last_error = None
+            
+            for engine in engines:
+                try:
+                    excel_file = pd.ExcelFile(file_path, engine=engine)
+                    break
+                except Exception as e:
+                    last_error = e
+                    continue
+            
+            if excel_file is None:
+                try:
+                    excel_file = pd.ExcelFile(file_path)
+                except Exception as e:
+                    raise Exception(f"Failed to read Excel file {file_path}. File extension: {file_ext}. Last error: {str(last_error)}")
+            
             servers = []
             summary = {}
             metadata = {"source_file": file_path, "sheets_processed": []}
@@ -68,7 +130,7 @@ class ExcelProcessor:
             # Process each sheet
             for sheet_name in excel_file.sheet_names:
                 try:
-                    df = pd.read_excel(file_path, sheet_name=sheet_name)
+                    df = pd.read_excel(file_path, sheet_name=sheet_name, engine=excel_file.engine)
                     metadata["sheets_processed"].append(sheet_name)
                     
                     # Try to identify server data sheets
