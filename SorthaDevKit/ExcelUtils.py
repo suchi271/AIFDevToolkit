@@ -10,7 +10,7 @@ class ExcelProcessor:
     """Utility class for processing Excel files with questions and generating output Excel files."""
     
     @staticmethod
-    def read_questions_from_excel(file_path: str, question_column: str = 'Question', sheet_name: str = None) -> List[Dict[str, str]]:
+    def read_questions_from_excel(file_path: str, question_column: str = 'Questions', sheet_name: str = None) -> List[Dict[str, str]]:
         """
         Read questions from an Excel file with Questions, Category, and Priority columns.
         
@@ -411,7 +411,7 @@ class ExcelProcessor:
     @staticmethod
     def create_output_excel(excel_output: ExcelOutputType, output_path: str, original_questions_file: str = None):
         """
-        Create an Excel file with questions, answers, and analysis.
+        Create an Excel file with questions, answers, and analysis matching the example structure.
         
         Args:
             excel_output: ExcelOutputType object with processed data
@@ -422,15 +422,17 @@ class ExcelProcessor:
             # Create a new workbook
             wb = openpyxl.Workbook()
             
-            # Sheet 1: Questions and Answers
+            # Sheet 1: AI Assisted AIF Completion (matching example structure)
             ws_qa = wb.active
-            ws_qa.title = "Questions & Answers"
+            ws_qa.title = "AI Assisted AIF Completion"
             
-            # Headers
+            # Headers matching the exact requirements (5 columns only)
             headers = ['Question', 'Answer', 'Confidence', 'Source Reference', 'Status']
             for col, header in enumerate(headers, 1):
                 ws_qa.cell(row=1, column=col, value=header)
                 ws_qa.cell(row=1, column=col).font = openpyxl.styles.Font(bold=True)
+                # Add header background color
+                ws_qa.cell(row=1, column=col).fill = openpyxl.styles.PatternFill(start_color="D3D3D3", end_color="D3D3D3", fill_type="solid")
             
             # Data rows
             for row, qa in enumerate(excel_output.questions_answers, 2):
@@ -438,7 +440,7 @@ class ExcelProcessor:
                 ws_qa.cell(row=row, column=2, value=qa.answer)
                 ws_qa.cell(row=row, column=3, value=qa.confidence)
                 ws_qa.cell(row=row, column=4, value=qa.source_reference)
-                ws_qa.cell(row=row, column=5, value="Answered" if qa.is_answered else "Not Answered")
+                ws_qa.cell(row=row, column=5, value="Answered" if qa.is_answered else "Unanswered")
                 
                 # Color coding based on confidence
                 if qa.confidence == "High":
@@ -447,14 +449,23 @@ class ExcelProcessor:
                     ws_qa.cell(row=row, column=3).fill = openpyxl.styles.PatternFill(start_color="FFFF99", end_color="FFFF99", fill_type="solid")
                 elif qa.confidence == "Low":
                     ws_qa.cell(row=row, column=3).fill = openpyxl.styles.PatternFill(start_color="FFB6C1", end_color="FFB6C1", fill_type="solid")
+                elif qa.confidence == "Unknown":
+                    ws_qa.cell(row=row, column=3).fill = openpyxl.styles.PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
+                
+                # Color coding for status
+                if qa.is_answered:
+                    ws_qa.cell(row=row, column=5).fill = openpyxl.styles.PatternFill(start_color="90EE90", end_color="90EE90", fill_type="solid")
+                else:
+                    ws_qa.cell(row=row, column=5).fill = openpyxl.styles.PatternFill(start_color="FFB6C1", end_color="FFB6C1", fill_type="solid")
             
-            # Sheet 2: Summary
+            # Sheet 2: Summary (matching example structure)
             ws_summary = wb.create_sheet(title="Summary")
             
             total_questions = len(excel_output.questions_answers)
             answered_questions = len([qa for qa in excel_output.questions_answers if qa.is_answered])
             unanswered_questions = total_questions - answered_questions
             
+            # Summary data focusing on core metrics
             summary_data = [
                 ["Total Questions", total_questions],
                 ["Answered Questions", answered_questions],
@@ -473,17 +484,25 @@ class ExcelProcessor:
             for row, (label, value) in enumerate(summary_data, 1):
                 ws_summary.cell(row=row, column=1, value=label)
                 ws_summary.cell(row=row, column=2, value=value)
-                if label and not str(value).replace(".", "").replace("%", "").isdigit():
+                if label and label != "":
                     ws_summary.cell(row=row, column=1).font = openpyxl.styles.Font(bold=True)
             
-            # Sheet 3: Unanswered Questions
-            if excel_output.unanswered_questions:
-                ws_unanswered = wb.create_sheet(title="Unanswered Questions")
-                ws_unanswered.cell(row=1, column=1, value="Unanswered Questions")
-                ws_unanswered.cell(row=1, column=1).font = openpyxl.styles.Font(bold=True)
-                
-                for row, question in enumerate(excel_output.unanswered_questions, 2):
-                    ws_unanswered.cell(row=row, column=1, value=question)
+            # Sheet 3: Unanswered Questions (matching example structure)
+            ws_unanswered = wb.create_sheet(title="Unanswered Questions")
+            ws_unanswered.cell(row=1, column=1, value="Unanswered Questions")
+            ws_unanswered.cell(row=1, column=1).font = openpyxl.styles.Font(bold=True)
+            ws_unanswered.cell(row=1, column=1).fill = openpyxl.styles.PatternFill(start_color="D3D3D3", end_color="D3D3D3", fill_type="solid")
+            
+            unanswered_count = 2
+            for qa in excel_output.questions_answers:
+                if not qa.is_answered:
+                    ws_unanswered.cell(row=unanswered_count, column=1, value=qa.question)
+                    unanswered_count += 1
+            
+            # If no unanswered questions, add a message
+            if unanswered_count == 2:
+                ws_unanswered.cell(row=2, column=1, value="All questions have been answered!")
+                ws_unanswered.cell(row=2, column=1).font = openpyxl.styles.Font(italic=True)
             
             # Auto-adjust column widths
             for ws in wb.worksheets:
@@ -496,7 +515,7 @@ class ExcelProcessor:
                                 max_length = len(str(cell.value))
                         except:
                             pass
-                    adjusted_width = min(max_length + 2, 50)
+                    adjusted_width = min(max_length + 2, 80)  # Allow wider columns for questions
                     ws.column_dimensions[column_letter].width = adjusted_width
             
             # Save the workbook

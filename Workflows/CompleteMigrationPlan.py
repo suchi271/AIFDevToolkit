@@ -258,6 +258,7 @@ class CompleteMigrationPlanWorkflow(QuestionAnsweringWorkFlowBase):
                 confidence="Medium",
                 is_answered=True,
                 category="Project",
+                priority="High",
                 source_reference="Default"
             ),
             QuestionAnswer(
@@ -266,6 +267,7 @@ class CompleteMigrationPlanWorkflow(QuestionAnsweringWorkFlowBase):
                 confidence="Medium",
                 is_answered=True,
                 category="Business",
+                priority="High",
                 source_reference="Generated"
             )
         ]
@@ -305,6 +307,7 @@ class CompleteMigrationPlanWorkflow(QuestionAnsweringWorkFlowBase):
                     confidence="High",
                     is_answered=True,
                     category="Business",
+                    priority="High",
                     source_reference="Transcript"
                 ))
                 return qa_pairs
@@ -325,46 +328,87 @@ class CompleteMigrationPlanWorkflow(QuestionAnsweringWorkFlowBase):
         
         print(f"✓ Using LLM for enhanced transcript analysis")
         
-        for question in questions_data:
+        for question_data in questions_data:
             try:
+                # Extract question and metadata
+                question = question_data['question'] if isinstance(question_data, dict) else question_data
+                category = question_data.get('category', 'General') if isinstance(question_data, dict) else 'General'
+                priority = question_data.get('priority', 'Medium') if isinstance(question_data, dict) else 'Medium'
+                
                 prompt = f"""
-                Based on the following transcript, please answer this question:
+                Analyze the following transcript to answer this specific question. Please provide a direct, concise answer.
                 
                 Question: {question}
                 
-                Transcript excerpt:
-                {transcript_content[:3000]}...
+                Transcript:
+                {transcript_content}
                 
-                Please provide:
-                1. A direct answer to the question
-                2. Confidence level (High/Medium/Low)
-                3. Relevant excerpt from transcript as source reference
+                Instructions:
+                1. If the answer is clearly found in the transcript, provide a direct answer (2-3 sentences max)
+                2. If the answer is not addressed in the transcript, respond exactly with: "Not addressed in transcript"
+                3. Provide a confidence level: High (explicitly mentioned), Medium (can be inferred), Low (unclear), or Unknown (not addressed)
+                4. If you find the answer in the transcript, try to identify a rough timestamp or section reference
                 
-                If the answer cannot be found in the transcript, indicate "Not found in transcript" and provide a reasonable assumption if applicable.
+                Format your response as:
+                ANSWER: [your answer or "Not addressed in transcript"]
+                CONFIDENCE: [High/Medium/Low/Unknown]
+                SOURCE: [timestamp or section reference if available, or "N/A" if not addressed]
                 """
                 
                 response = llm.invoke(prompt)
+                response_text = response.content if hasattr(response, 'content') else str(response)
                 
-                # Parse the response (simplified for now)
+                # Parse the structured response
+                answer = "Not addressed in transcript"
+                confidence = "Unknown"
+                source_ref = "N/A"
+                is_answered = False
+                
+                lines = response_text.split('\n')
+                for line in lines:
+                    line = line.strip()
+                    if line.startswith('ANSWER:'):
+                        answer = line.replace('ANSWER:', '').strip()
+                        if answer != "Not addressed in transcript":
+                            is_answered = True
+                    elif line.startswith('CONFIDENCE:'):
+                        confidence = line.replace('CONFIDENCE:', '').strip()
+                        if confidence not in ['High', 'Medium', 'Low', 'Unknown']:
+                            confidence = "Medium"
+                    elif line.startswith('SOURCE:'):
+                        source_ref = line.replace('SOURCE:', '').strip()
+                
+                # If parsing failed, use fallback
+                if not any(line.startswith(('ANSWER:', 'CONFIDENCE:', 'SOURCE:')) for line in lines):
+                    if "not addressed" in response_text.lower() or "not found" in response_text.lower():
+                        answer = "Not addressed in transcript"
+                        confidence = "Unknown"
+                        is_answered = False
+                    else:
+                        answer = response_text[:200] + "..." if len(response_text) > 200 else response_text
+                        confidence = "Medium"
+                        is_answered = True
+                        source_ref = "Transcript Analysis"
+                
                 qa_pairs.append(QuestionAnswer(
                     question=question,
-                    answer=response.content[:500] if hasattr(response, 'content') and response.content else str(response)[:500],
-                    confidence="Medium",
-                    is_answered=bool(response),
-                    category="Migration Planning",
-                    source_reference="Transcript Analysis"
+                    answer=answer,
+                    confidence=confidence,
+                    is_answered=is_answered,
+                    category=category,
+                    priority=priority,
+                    source_reference=source_ref
                 ))
-                
-                # Suppressed per-question analysis output
                 
             except Exception as e:
                 print(f"Error analyzing question '{question}': {str(e)}")
                 qa_pairs.append(QuestionAnswer(
                     question=question,
                     answer="Error in analysis",
-                    confidence="Low",
+                    confidence="Unknown",
                     is_answered=False,
-                    category="Error",
+                    category=category if 'category' in locals() else "Error",
+                    priority=priority if 'priority' in locals() else "Medium",
                     source_reference="Processing Error"
                 ))
         
@@ -379,37 +423,61 @@ class CompleteMigrationPlanWorkflow(QuestionAnsweringWorkFlowBase):
         """Simple transcript analysis without LLM."""
         qa_pairs = []
         
-        for question in questions_data:
+        for question_data in questions_data:
+            # Extract question and metadata
+            question = question_data['question'] if isinstance(question_data, dict) else question_data
+            category = question_data.get('category', 'General') if isinstance(question_data, dict) else 'General'
+            priority = question_data.get('priority', 'Medium') if isinstance(question_data, dict) else 'Medium'
+            
             # Simple keyword matching and analysis
-            answer = "Based on transcript analysis"
-            confidence = "Medium"
-            is_answered = True
+            answer = "Not addressed in transcript"
+            confidence = "Unknown"
+            is_answered = False
+            source_ref = "N/A"
             
             # Look for relevant keywords in transcript
-            if "security" in question.lower():
-                if "security" in transcript_content.lower():
-                    answer = "Security requirements identified in transcript discussion"
-                else:
-                    answer = "Standard Azure security best practices recommended"
-            elif "database" in question.lower():
-                if any(db in transcript_content.lower() for db in ["sql", "database", "db"]):
-                    answer = "Database components identified in transcript"
-                else:
-                    answer = "Database migration strategies to be determined"
-            elif "cost" in question.lower():
-                answer = "Cost optimization through Azure rightsizing and reserved instances"
-            elif "timeline" in question.lower():
-                answer = "Phased migration approach recommended over 6-12 months"
-            else:
-                answer = f"Analysis based on transcript review - {question}"
+            question_lower = question.lower()
+            transcript_lower = transcript_content.lower()
+            
+            if "security" in question_lower:
+                if any(keyword in transcript_lower for keyword in ["security", "secure", "authentication", "authorization"]):
+                    answer = "Security requirements discussed in transcript"
+                    confidence = "Medium"
+                    is_answered = True
+                    source_ref = "Transcript content analysis"
+            elif "database" in question_lower:
+                if any(db in transcript_lower for db in ["sql", "database", "db", "mysql", "postgresql", "oracle"]):
+                    answer = "Database components mentioned in transcript"
+                    confidence = "Medium"
+                    is_answered = True
+                    source_ref = "Transcript content analysis"
+            elif "cost" in question_lower or "budget" in question_lower:
+                if any(cost_word in transcript_lower for cost_word in ["cost", "budget", "price", "expensive", "cheap"]):
+                    answer = "Cost considerations discussed in transcript"
+                    confidence = "Medium"
+                    is_answered = True
+                    source_ref = "Transcript content analysis"
+            elif "timeline" in question_lower or "schedule" in question_lower:
+                if any(time_word in transcript_lower for time_word in ["timeline", "schedule", "month", "week", "year", "deadline"]):
+                    answer = "Timeline information mentioned in transcript"
+                    confidence = "Medium"
+                    is_answered = True
+                    source_ref = "Transcript content analysis"
+            elif "application" in question_lower or "app" in question_lower:
+                if any(app_word in transcript_lower for app_word in ["application", "app", "software", "system"]):
+                    answer = "Application information discussed in transcript"
+                    confidence = "Medium"
+                    is_answered = True
+                    source_ref = "Transcript content analysis"
             
             qa_pairs.append(QuestionAnswer(
                 question=question,
                 answer=answer,
                 confidence=confidence,
                 is_answered=is_answered,
-                category="Migration Planning",
-                source_reference="Transcript"
+                category=category,
+                priority=priority,
+                source_reference=source_ref
             ))
         
         return qa_pairs
