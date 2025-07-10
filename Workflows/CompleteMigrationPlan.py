@@ -8,12 +8,9 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from SorthaDevKit.WorkFlowBase import QuestionAnsweringWorkFlowBase
 from SorthaDevKit.StateBase import StateBase, ProcessingResult, QuestionAnswer
 from SorthaDevKit.ExcelUtils import ExcelProcessor
-from SorthaDevKit.ArchitectureDiagram import ArchitectureDiagramGenerator
-from SorthaDevKit.VisioExporter import VisioExporter
 from SorthaDevKit.MigrationPlanGenerator import AzureMigrationPlanGenerator
 from SorthaDevKit.MigrationPlanExporter import MigrationPlanDocumentExporter
 from datetime import datetime
-import json
 
 class CompleteMigrationPlanWorkflow(QuestionAnsweringWorkFlowBase):
     """Complete Azure Migration Plan generation workflow."""
@@ -23,8 +20,6 @@ class CompleteMigrationPlanWorkflow(QuestionAnsweringWorkFlowBase):
         self.state = state
         self.migration_plan_generator = AzureMigrationPlanGenerator()
         self.document_exporter = MigrationPlanDocumentExporter()
-        self.architecture_generator = ArchitectureDiagramGenerator()
-        self.visio_exporter = VisioExporter()
     
     def initialize(self, config: Dict[str, Any]) -> bool:
         """Initialize the workflow with configuration."""
@@ -84,19 +79,10 @@ class CompleteMigrationPlanWorkflow(QuestionAnsweringWorkFlowBase):
                 result.add_error("Failed to process questions and transcript")
                 return result
             
-            # Step 6: Generate architecture diagram
-            print("Generating architecture diagram...")
-            architecture_diagram = self._generate_architecture_diagram(azure_migrate_data)
-            if not architecture_diagram:
-                result.add_error("Failed to generate architecture diagram")
-                return result
-            print(f"✓ Generated architecture with {len(architecture_diagram.components)} components")
-            
-            # Step 7: Generate comprehensive migration plan
+            # Step 6: Generate comprehensive migration plan
             print("Generating comprehensive migration plan...")
             migration_plan = self._generate_migration_plan(
                 azure_migrate_data, 
-                architecture_diagram, 
                 questions_answers
             )
             if not migration_plan:
@@ -104,7 +90,7 @@ class CompleteMigrationPlanWorkflow(QuestionAnsweringWorkFlowBase):
                 return result
             print("✓ Generated comprehensive migration plan")
             
-            # Step 8: Export Excel Q&A report
+            # Step 7: Export Excel Q&A report
             print("Exporting Q&A analysis...")
             qa_export_success = self._export_qa_report(questions_answers)
             if qa_export_success:
@@ -112,29 +98,22 @@ class CompleteMigrationPlanWorkflow(QuestionAnsweringWorkFlowBase):
             else:
                 print("⚠ Q&A export had issues (continuing)")
             
-            # Step 9: Export architecture diagrams
-            print("Exporting architecture diagrams...")
-            diagram_files = self._export_architecture_diagrams(architecture_diagram)
-            print("✓ Architecture diagrams exported")
-            
-            # Step 10: Export migration plan documents
+            # Step 8: Export migration plan documents
             print("Exporting migration plan documents...")
             plan_files = self._export_migration_plan_documents(migration_plan)
             print("✓ Migration plan documents exported")
             
-            # Step 11: Finalize and report
-            self._print_final_summary(migration_plan, diagram_files, plan_files, qa_export_success)
+            # Step 9: Finalize and report
+            self._print_final_summary(migration_plan, plan_files, qa_export_success)
             
             # Set success result
             result.set_success(
                 "Complete Azure Migration Plan generated successfully",
                 {
                     "migration_plan": migration_plan,
-                    "architecture_diagram": architecture_diagram,
                     "azure_migrate_data": azure_migrate_data,
                     "questions_answers": questions_answers,
                     "output_files": {
-                        "diagrams": diagram_files,
                         "migration_plans": plan_files,
                         "qa_report": qa_export_success
                     }
@@ -181,24 +160,7 @@ class CompleteMigrationPlanWorkflow(QuestionAnsweringWorkFlowBase):
             print(f"Error processing Azure Migrate report: {str(e)}")
             return None
     
-    def _generate_architecture_diagram(self, azure_migrate_data):
-        """Generate architecture diagram."""
-        try:
-            # Create a dummy excel output for the architecture generator
-            from SorthaDevKit.StateBase import ExcelOutputType
-            dummy_excel_output = ExcelOutputType(
-                questions_answers=[],
-                metadata={"source": "placeholder"}
-            )
-            
-            return self.architecture_generator.generate_architecture_from_migrate_and_transcript(
-                azure_migrate_data, dummy_excel_output
-            )
-        except Exception as e:
-            print(f"Error generating architecture diagram: {str(e)}")
-            return None
-    
-    def _generate_migration_plan(self, azure_migrate_data, architecture_diagram, questions_answers):
+    def _generate_migration_plan(self, azure_migrate_data, questions_answers):
         """Generate comprehensive migration plan."""
         try:
             # Extract project name from questions if available
@@ -211,7 +173,6 @@ class CompleteMigrationPlanWorkflow(QuestionAnsweringWorkFlowBase):
             
             return self.migration_plan_generator.generate_migration_plan(
                 azure_migrate_data=azure_migrate_data,
-                architecture_diagram=architecture_diagram,
                 transcript_insights=questions_answers,
                 project_name=project_name
             )
@@ -219,50 +180,8 @@ class CompleteMigrationPlanWorkflow(QuestionAnsweringWorkFlowBase):
         except Exception as e:
             print(f"Error generating migration plan: {str(e)}")
             return None
-    
-    def _export_architecture_diagrams(self, architecture_diagram) -> Dict[str, str]:
-        """Export architecture diagrams in multiple formats."""
-        try:
-            output_files = {}
-            
-            # JSON export
-            json_path = self.get_output_config().get("architecture_diagram_json", "output/architecture_diagram.json")
-            os.makedirs(os.path.dirname(json_path), exist_ok=True)
-            
-            with open(json_path, 'w') as f:
-                json.dump(architecture_diagram.dict(), f, indent=2, default=str)
-            output_files['json'] = json_path
-            print(f"✓ JSON diagram saved: {json_path}")
-            
-            # Export other formats using VisioExporter
-            base_path = json_path.replace('.json', '')
-            
-            # VSDX export
-            vsdx_path = base_path + ".vsdx"
-            if self.visio_exporter.export_to_vsdx(architecture_diagram, vsdx_path):
-                output_files['vsdx'] = vsdx_path
-                print(f"✓ VSDX diagram saved: {vsdx_path}")
-            
-            # SVG export
-            svg_path = base_path + ".svg"
-            if self.visio_exporter.export_to_svg(architecture_diagram, svg_path):
-                output_files['svg'] = svg_path
-                print(f"✓ SVG diagram saved: {svg_path}")
-            
-            # Enhanced XML export
-            xml_path = base_path + ".xml"
-            if self.visio_exporter.export_to_enhanced_xml(architecture_diagram, xml_path):
-                output_files['xml'] = xml_path
-                print(f"✓ Enhanced Visio XML diagram saved: {xml_path}")
-            
-            return output_files
-            
-        except Exception as e:
-            print(f"Error exporting architecture diagrams: {str(e)}")
-            return {}
-    
     def _export_migration_plan_documents(self, migration_plan) -> Dict[str, str]:
-        """Export migration plan in multiple document formats."""
+        """Export migration plan in DOCX document format."""
         try:
             output_files = {}
             output_dir = "output"
@@ -276,37 +195,24 @@ class CompleteMigrationPlanWorkflow(QuestionAnsweringWorkFlowBase):
             else:
                 print("⚠ Word export failed (python-docx may not be installed)")
             
-            # Markdown export
-            markdown_path = os.path.join(output_dir, "azure_migration_plan.md")
-            if self.document_exporter.export_to_markdown(migration_plan, markdown_path):
-                output_files['markdown'] = markdown_path
-                print(f"✓ Markdown migration plan saved: {markdown_path}")
-            
-            # JSON export
-            json_path = os.path.join(output_dir, "azure_migration_plan.json")
-            if self.document_exporter.export_to_json(migration_plan, json_path):
-                output_files['json'] = json_path
-                print(f"✓ JSON migration plan saved: {json_path}")
-            
             return output_files
             
         except Exception as e:
-            print(f"Error exporting migration plan documents: {str(e)}")
+            print(f"Error exporting migration plan document: {str(e)}")
             return {}
     
-    def _print_final_summary(self, migration_plan, diagram_files, plan_files, qa_success):
+    def _print_final_summary(self, migration_plan, plan_files, qa_success):
         """Print final summary of generated outputs."""
         print("\n✅ Migration plan generation complete!")
         
         # Count generated files
-        total_files = len(plan_files) + len(diagram_files)
+        total_files = len(plan_files)
         if qa_success:
             total_files += 1  # Add Q&A report
             
         print(f"✓ Generated {total_files} output files in the output/ directory")
         print(f"✓ Processed {len(migration_plan.azure_migrate_data.servers)} servers")
         print(f"✓ Created {len(migration_plan.migration_waves)} migration waves")
-        print(f"✓ Architecture includes {len(migration_plan.architecture_diagram.components)} components")
     
     def _process_questions_and_transcript(self):
         """Process questions and transcript to generate Q&A pairs."""
@@ -562,11 +468,7 @@ class CompleteMigrationPlanWorkflow(QuestionAnsweringWorkFlowBase):
         except Exception:
             # Fallback configuration
             return {
-                "output_file_path": "output/filled_aif.xlsx",
-                "architecture_diagram_json": "output/architecture_diagram.json",
-                "architecture_diagram_svg": "output/architecture_diagram.svg",
-                "architecture_diagram_xml": "output/architecture_diagram.xml",
-                "architecture_diagram_vsdx": "output/architecture_diagram.vsdx"
+                "output_file_path": "output/filled_aif.xlsx"
             }
 
     def _initialize_azure_openai(self) -> bool:

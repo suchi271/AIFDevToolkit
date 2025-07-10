@@ -10,9 +10,9 @@ class ExcelProcessor:
     """Utility class for processing Excel files with questions and generating output Excel files."""
     
     @staticmethod
-    def read_questions_from_excel(file_path: str, question_column: str = 'Question', sheet_name: str = None) -> List[str]:
+    def read_questions_from_excel(file_path: str, question_column: str = 'Question', sheet_name: str = None) -> List[Dict[str, str]]:
         """
-        Read questions from an Excel file with improved error handling and multiple engine support.
+        Read questions from an Excel file with Questions, Category, and Priority columns.
         
         Args:
             file_path: Path to the Excel file
@@ -20,7 +20,7 @@ class ExcelProcessor:
             sheet_name: Name of the sheet to read (None for first sheet)
             
         Returns:
-            List of questions
+            List of dictionaries with question, category, and priority
         """
         try:
             # Determine which engine to use based on file extension
@@ -61,11 +61,11 @@ class ExcelProcessor:
                 except Exception as e:
                     raise Exception(f"Failed to read Excel file {file_path}. File extension: {file_ext}. Last error: {str(last_error)}")
             
-            # Handle different possible column names
-            possible_columns = [question_column, 'Questions', 'Question', 'questions', 'QUESTION']
+            # Handle different possible column names for Questions
+            possible_question_columns = [question_column, 'Questions', 'Question', 'questions', 'QUESTION']
             question_col = None
             
-            for col in possible_columns:
+            for col in possible_question_columns:
                 if col in df.columns:
                     question_col = col
                     break
@@ -74,8 +74,39 @@ class ExcelProcessor:
                 # If no standard column found, use the first column
                 question_col = df.columns[0]
             
-            questions = df[question_col].dropna().tolist()
-            return [str(q).strip() for q in questions if str(q).strip()]
+            # Handle different possible column names for Category
+            possible_category_columns = ['Category', 'category', 'CATEGORY', 'Categories']
+            category_col = None
+            
+            for col in possible_category_columns:
+                if col in df.columns:
+                    category_col = col
+                    break
+            
+            # Handle different possible column names for Priority
+            possible_priority_columns = ['Priority', 'priority', 'PRIORITY', 'Priorities']
+            priority_col = None
+            
+            for col in possible_priority_columns:
+                if col in df.columns:
+                    priority_col = col
+                    break
+            
+            # Extract questions with their metadata
+            questions_data = []
+            for index, row in df.iterrows():
+                question = str(row[question_col]).strip() if pd.notna(row[question_col]) else ""
+                if question:  # Only add non-empty questions
+                    category = str(row[category_col]).strip() if category_col and pd.notna(row[category_col]) else "General"
+                    priority = str(row[priority_col]).strip() if priority_col and pd.notna(row[priority_col]) else "Medium"
+                    
+                    questions_data.append({
+                        'question': question,
+                        'category': category,
+                        'priority': priority
+                    })
+            
+            return questions_data
             
         except Exception as e:
             raise Exception(f"Error reading Excel file {file_path}: {str(e)}")

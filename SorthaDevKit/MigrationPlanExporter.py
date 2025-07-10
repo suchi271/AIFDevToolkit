@@ -1,5 +1,4 @@
 from typing import Dict, Any, List
-import json
 from datetime import datetime
 from dataclasses import asdict
 from .StateBase import AzureMigrationPlan, MigrationWave, MigrationRisk, CostEstimate
@@ -15,7 +14,7 @@ except ImportError:
     DOCX_AVAILABLE = False
 
 class MigrationPlanDocumentExporter:
-    """Exports Azure Migration Plan to various document formats."""
+    """Exports Azure Migration Plan to Word document format."""
     
     def __init__(self):
         self.docx_available = DOCX_AVAILABLE
@@ -86,56 +85,6 @@ class MigrationPlanDocumentExporter:
             
         except Exception as e:
             print(f"Error creating Word document: {str(e)}")
-            return False
-    
-    def export_to_markdown(self, migration_plan, output_path: str) -> bool:
-        """
-        Export migration plan to Markdown document.
-        
-        Args:
-            migration_plan: Complete migration plan data
-            output_path: Path to save the Markdown document
-            
-        Returns:
-            True if successful, False otherwise
-        """
-        try:
-            markdown_content = self._generate_markdown_content(migration_plan)
-            
-            with open(output_path, 'w', encoding='utf-8') as f:
-                f.write(markdown_content)
-            
-            return True
-            
-        except Exception as e:
-            print(f"Error creating Markdown document: {str(e)}")
-            return False
-    
-    def export_to_json(self, migration_plan, output_path: str) -> bool:
-        """
-        Export migration plan to JSON format.
-        
-        Args:
-            migration_plan: Complete migration plan data
-            output_path: Path to save the JSON document
-            
-        Returns:
-            True if successful, False otherwise
-        """
-        try:
-            # Convert dataclass to dict
-            plan_dict = asdict(migration_plan)
-            
-            # Handle nested objects that may not be serializable
-            plan_dict = self._make_json_serializable(plan_dict)
-            
-            with open(output_path, 'w', encoding='utf-8') as f:
-                json.dump(plan_dict, f, indent=2, ensure_ascii=False, default=str)
-            
-            return True
-            
-        except Exception as e:
-            print(f"Error creating JSON document: {str(e)}")
             return False
     
     def _setup_document_styles(self, doc):
@@ -277,8 +226,8 @@ class MigrationPlanDocumentExporter:
         # Architecture overview
         doc.add_heading('3.1 Architecture Overview', level=2)
         arch_para = doc.add_paragraph()
-        arch_para.add_run(f"The target Azure architecture includes {len(migration_plan.architecture_diagram.components)} ")
-        arch_para.add_run("Azure components designed to provide scalability, security, and high availability. ")
+        arch_para.add_run(f"The target Azure architecture includes {len(migration_plan.target_services)} ")
+        arch_para.add_run("Azure services designed to provide scalability, security, and high availability. ")
         arch_para.add_run("The architecture follows Azure Well-Architected Framework principles.")
         
         # Target services
@@ -302,8 +251,7 @@ class MigrationPlanDocumentExporter:
         doc.add_paragraph("The detailed architecture diagram is available in the following formats:")
         diagram_para = doc.add_paragraph()
         diagram_para.add_run("• VSDX format for Microsoft Visio editing\n")
-        diagram_para.add_run("• SVG format for web viewing\n")
-        diagram_para.add_run("• JSON format for programmatic access")
+        diagram_para.add_run("• SVG format for web viewing")
     
     def _add_migration_strategy(self, doc, migration_plan):
         """Add migration strategy section."""
@@ -528,167 +476,3 @@ class MigrationPlanDocumentExporter:
         doc.add_heading('11.2 Vendor Requirements', level=2)
         for requirement in migration_plan.vendor_requirements:
             doc.add_paragraph(f"• {requirement}")
-    
-    def _generate_markdown_content(self, migration_plan) -> str:
-        """Generate markdown content for the migration plan."""
-        markdown = f"""# {migration_plan.project_name}
-
-**Azure Migration Plan**
-
----
-
-**Document Information:**
-- Version: {migration_plan.document_version}
-- Created: {migration_plan.created_date}
-- Created By: {migration_plan.created_by}
-- Last Updated: {migration_plan.last_updated}
-
----
-
-## Table of Contents
-
-1. [Executive Summary](#executive-summary)
-2. [Current State Assessment](#current-state-assessment)
-3. [Target Architecture](#target-architecture)
-4. [Migration Strategy](#migration-strategy)
-5. [Migration Timeline and Waves](#migration-timeline-and-waves)
-6. [Risk Assessment](#risk-assessment)
-7. [Cost Analysis](#cost-analysis)
-8. [Implementation Plan](#implementation-plan)
-9. [Governance and Compliance](#governance-and-compliance)
-10. [Success Metrics](#success-metrics)
-11. [Appendices](#appendices)
-
----
-
-## Executive Summary
-
-{migration_plan.executive_summary}
-
-### Business Case
-
-{migration_plan.business_case}
-
-### Key Metrics
-
-| Metric | Value |
-|--------|-------|
-| Total Servers | {len(migration_plan.azure_migrate_data.servers)} |
-| Migration Waves | {len(migration_plan.migration_waves)} |
-| Total Investment | ${migration_plan.total_investment:,.2f} |
-| Expected Annual Savings | ${migration_plan.expected_savings:,.2f} |
-| Project Duration | {migration_plan.migration_timeline.total_duration_months} months |
-
----
-
-## Current State Assessment
-
-### Infrastructure Overview
-
-The current infrastructure consists of {migration_plan.current_infrastructure['total_servers']} servers with a total of {migration_plan.current_infrastructure['total_cpu_cores']} CPU cores, {migration_plan.current_infrastructure['total_memory_gb']:.0f} GB of memory, and {migration_plan.current_infrastructure['total_storage_gb']:.0f} GB of storage.
-
----
-
-## Migration Strategy
-
-### Migration Approach
-
-{migration_plan.migration_approach}
-
-### Migration Waves
-
-"""
-        
-        for wave in migration_plan.migration_waves:
-            markdown += f"""
-#### Wave {wave.wave_number}: {wave.name}
-
-- **Description:** {wave.description}
-- **Duration:** {wave.duration_weeks} weeks
-- **Servers:** {len(wave.servers)}
-- **Risk Level:** {wave.risk_level}
-- **Estimated Cost:** ${wave.estimated_cost:,.2f}
-"""
-        
-        markdown += """
----
-
-## Risk Assessment
-
-### Identified Risks
-
-| Risk ID | Description | Impact | Probability | Mitigation | Owner |
-|---------|-------------|--------|-------------|------------|-------|
-"""
-        
-        for risk in migration_plan.risks:
-            markdown += f"| {risk.risk_id} | {risk.description[:50]}... | {risk.impact} | {risk.probability} | {risk.mitigation[:50]}... | {risk.owner} |\n"
-        
-        markdown += """
----
-
-## Cost Analysis
-
-### Cost Overview
-
-- **Total Migration Investment:** ${:,.2f}
-- **Expected Annual Savings:** ${:,.2f}
-- **Return on Investment:** {:.1f} months
-
-### Cost Breakdown
-
-| Category | Current Monthly | Azure Monthly | Migration Cost | Annual Savings |
-|----------|----------------|---------------|----------------|----------------|
-""".format(
-            migration_plan.total_investment,
-            migration_plan.expected_savings,
-            migration_plan.total_investment / migration_plan.expected_savings * 12 if migration_plan.expected_savings > 0 else 0
-        )
-        
-        for cost in migration_plan.cost_estimates:
-            markdown += f"| {cost.category} | ${cost.current_monthly_cost:,.2f} | ${cost.azure_monthly_cost:,.2f} | ${cost.one_time_migration_cost:,.2f} | ${cost.annual_savings:,.2f} |\n"
-        
-        markdown += """
----
-
-## Success Metrics
-
-### Key Performance Indicators
-
-| KPI | Target | Measurement | Frequency |
-|-----|--------|-------------|-----------|
-"""
-        
-        for kpi in migration_plan.kpis:
-            markdown += f"| {kpi.get('kpi', '')} | {kpi.get('target', '')} | {kpi.get('measurement', '')} | {kpi.get('frequency', '')} |\n"
-        
-        markdown += """
----
-
-## Next Steps
-
-1. Review and approve this migration plan
-2. Secure necessary budget and resources
-3. Begin Azure environment setup
-4. Initiate Wave 1 migration activities
-5. Monitor progress against defined KPIs
-
----
-
-*This document was generated by SorthaDevKit Enhanced Developer Toolkit*
-"""
-        
-        return markdown
-    
-    def _make_json_serializable(self, obj):
-        """Make object JSON serializable."""
-        if hasattr(obj, '__dict__'):
-            return {key: self._make_json_serializable(value) for key, value in obj.__dict__.items()}
-        elif isinstance(obj, dict):
-            return {key: self._make_json_serializable(value) for key, value in obj.items()}
-        elif isinstance(obj, list):
-            return [self._make_json_serializable(item) for item in obj]
-        elif hasattr(obj, 'isoformat'):  # datetime objects
-            return obj.isoformat()
-        else:
-            return obj

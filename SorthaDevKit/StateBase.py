@@ -180,7 +180,6 @@ class AzureMigrationPlan:
     azure_migrate_data: AzureMigrateReport
     
     # Target Architecture
-    architecture_diagram: 'ArchitectureDiagram'
     target_services: List[Dict[str, Any]]
     
     # Migration Strategy

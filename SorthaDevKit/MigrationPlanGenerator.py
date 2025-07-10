@@ -212,7 +212,6 @@ Generate the content:
     def generate_migration_plan(
         self, 
         azure_migrate_data: AzureMigrateReport,
-        architecture_diagram: ArchitectureDiagram,
         transcript_insights: List[QuestionAnswer],
         project_name: str = None
     ) -> AzureMigrationPlan:
@@ -221,7 +220,6 @@ Generate the content:
         
         Args:
             azure_migrate_data: Parsed Azure Migrate report data
-            architecture_diagram: Generated target architecture
             transcript_insights: Q&A insights from transcript analysis
             project_name: Name of the migration project (uses .env DEFAULT_PROJECT_NAME if None)
             
@@ -240,8 +238,8 @@ Generate the content:
         # Analyze current infrastructure
         current_infrastructure = self._analyze_current_infrastructure(azure_migrate_data)
         
-        # Generate target services analysis
-        target_services = self._analyze_target_services(architecture_diagram, azure_migrate_data)
+        # Generate target services analysis (simplified without architecture diagram)
+        target_services = self._analyze_target_services_simplified(azure_migrate_data)
         
         # Create migration waves
         migration_waves = self._create_migration_waves(azure_migrate_data.servers, transcript_insights)
@@ -276,9 +274,7 @@ Generate the content:
         # Create technical specifications (conditional based on config)
         technical_specifications = {}
         if self.config['include_technical_details']:
-            technical_specifications = self._generate_technical_specifications(
-                azure_migrate_data, architecture_diagram
-            )
+            technical_specifications = self._generate_technical_specifications(azure_migrate_data)
         
         # Identify vendor requirements (conditional based on config)
         vendor_requirements = []
@@ -295,7 +291,6 @@ Generate the content:
             business_case=business_case,
             current_infrastructure=current_infrastructure,
             azure_migrate_data=azure_migrate_data,
-            architecture_diagram=architecture_diagram,
             target_services=target_services,
             migration_approach=self._determine_migration_approach(azure_migrate_data, transcript_insights),
             migration_timeline=migration_timeline,
@@ -512,6 +507,78 @@ Focus on business value and ROI to justify the migration investment.
         
         return service_analysis
     
+    def _analyze_target_services_simplified(self, azure_migrate_data: AzureMigrateReport) -> List[Dict[str, Any]]:
+        """Analyze target Azure services based on current infrastructure."""
+        service_analysis = []
+        
+        # Analyze what Azure services would be needed based on current servers
+        for server in azure_migrate_data.servers:
+            # Determine primary Azure service for this server
+            primary_service = "Azure Virtual Machines"  # Default for lift-and-shift
+            
+            # Check for database workloads
+            if any(app.lower() in ['sql', 'database', 'mysql', 'postgres'] for app in server.applications):
+                service_analysis.append({
+                    "service_name": "Azure SQL Database",
+                    "migration_strategy": "Modernize",
+                    "benefits": ["Managed service", "Built-in backup", "High availability"],
+                    "considerations": ["Application compatibility", "Feature parity"],
+                    "estimated_effort": "Medium",
+                    "source_servers": [server.server_name]
+                })
+            
+            # Check for web applications
+            if any(app.lower() in ['iis', 'web', 'http', 'apache', 'nginx'] for app in server.applications):
+                service_analysis.append({
+                    "service_name": "Azure App Service",
+                    "migration_strategy": "Modernize",
+                    "benefits": ["Auto-scaling", "Integrated CI/CD", "Built-in load balancing"],
+                    "considerations": ["Application dependencies", "Configuration changes"],
+                    "estimated_effort": "Medium",
+                    "source_servers": [server.server_name]
+                })
+            
+            # Default VM service for all servers
+            if not any(existing['service_name'] == primary_service for existing in service_analysis):
+                service_analysis.append({
+                    "service_name": primary_service,
+                    "migration_strategy": "Lift-and-Shift",
+                    "benefits": ["Quick migration", "Minimal changes", "Cost effective"],
+                    "considerations": ["OS compatibility", "Performance optimization"],
+                    "estimated_effort": "Low",
+                    "source_servers": [s.server_name for s in azure_migrate_data.servers]
+                })
+        
+        # Add common supporting services
+        service_analysis.extend([
+            {
+                "service_name": "Azure Virtual Network",
+                "migration_strategy": "New Implementation",
+                "benefits": ["Network isolation", "Hybrid connectivity", "Security"],
+                "considerations": ["IP addressing", "Subnet design", "Security groups"],
+                "estimated_effort": "Low",
+                "source_servers": []
+            },
+            {
+                "service_name": "Azure Storage",
+                "migration_strategy": "New Implementation", 
+                "benefits": ["Scalable storage", "Multiple access tiers", "Geo-redundancy"],
+                "considerations": ["Storage type selection", "Access patterns", "Cost optimization"],
+                "estimated_effort": "Low",
+                "source_servers": []
+            },
+            {
+                "service_name": "Azure Backup",
+                "migration_strategy": "New Implementation",
+                "benefits": ["Automated backup", "Long-term retention", "Point-in-time recovery"],
+                "considerations": ["Backup policies", "Retention periods", "Recovery procedures"],
+                "estimated_effort": "Low", 
+                "source_servers": []
+            }
+        ])
+        
+        return service_analysis
+
     def _create_migration_waves(self, servers: List[AzureMigrateServer], transcript_insights: List[QuestionAnswer]) -> List[MigrationWave]:
         """Create migration waves based on complexity and dependencies."""
         waves = []
@@ -1533,20 +1600,13 @@ Return the response as a structured JSON object with training programs as keys.
         
         return criteria
     
-    def _generate_technical_specifications(self, azure_migrate_data: AzureMigrateReport, architecture_diagram: ArchitectureDiagram) -> Dict[str, Any]:
+    def _generate_technical_specifications(self, azure_migrate_data: AzureMigrateReport) -> Dict[str, Any]:
         """Generate technical specifications."""
         return {
-            "azure_services": {
-                service.azure_service: {
-                    "component_count": len([c for c in architecture_diagram.components if c.azure_service == service.azure_service]),
-                    "configuration": service.properties
-                }
-                for service in architecture_diagram.components
-            },
             "network_architecture": {
-                "virtual_networks": len([c for c in architecture_diagram.components if "Virtual Network" in c.azure_service]),
-                "subnets": len([c for c in architecture_diagram.components if "Subnet" in c.azure_service]),
-                "security_groups": len([c for c in architecture_diagram.components if "NSG" in c.azure_service or "Security Group" in c.azure_service])
+                "virtual_networks": 1,  # Assume single VNet for simplicity
+                "subnets": 3,  # Typical web/app/data tier setup
+                "security_groups": len(azure_migrate_data.servers)  # One NSG per server minimum
             },
             "compute_specifications": {
                 "total_servers": len(azure_migrate_data.servers),
