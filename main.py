@@ -1,6 +1,5 @@
 
-from Workflows.CompleteMigrationPlan import CompleteMigrationPlanWorkflow
-from State import State
+from Workflows.LangGraphMigrationPlan import create_langgraph_workflow
 from Input import Input
 import sys
 import logging
@@ -21,17 +20,32 @@ logging.getLogger("azure").setLevel(logging.WARNING)
 os.environ.setdefault("AZURE_LOG_LEVEL", "WARNING")
 
 def main():
-    print("SorthaDevKit - Developer Toolkit")
+    """Main entry point for the Azure Migration Planning Toolkit."""
+    print("SorthaDevKit - Developer Toolkit (LangGraph)")
     print("=" * 40)
-    state = State(inputs=Input)
-    workflow = CompleteMigrationPlanWorkflow(state)
+    print("🚀 Using LangGraph-based workflow...")
+    
+    # Create and run the LangGraph workflow
+    workflow = create_langgraph_workflow(Input)
     result = workflow.run()
+    
     if result.success:
         print("\n[SUCCESS] Complete migration plan generated successfully!")
+        if hasattr(result, 'data') and result.data:
+            print("Generated outputs:")
+            if 'output_files' in result.data:
+                output_files = result.data['output_files']
+                if 'migration_plans' in output_files and output_files['migration_plans']:
+                    for file_type, file_path in output_files['migration_plans'].items():
+                        print(f"  ✓ {file_type.title()} migration plan: {file_path}")
+                if 'qa_report' in output_files and output_files['qa_report']:
+                    print(f"  ✓ Q&A analysis report: output/filled_aif.xlsx")
     else:
         print("\n[ERROR] Migration plan generation failed:")
         for error in result.errors:
             print(f"  - {error}")
+    
+    return result
 
 if __name__ == "__main__":
     main()
