@@ -688,7 +688,7 @@ class LangGraphMigrationPlanWorkflow:
     
     def _print_final_summary(self, state: WorkflowState):
         """Print final summary of generated outputs."""
-        print("\n✅ Migration plan generation complete!")
+        print("\nMigration plan generation complete!")
         
         # Count generated files
         total_files = len(state["plan_files"])

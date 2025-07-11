@@ -20,10 +20,8 @@ logging.getLogger("azure").setLevel(logging.WARNING)
 os.environ.setdefault("AZURE_LOG_LEVEL", "WARNING")
 
 def main():
-    """Main entry point for the Azure Migration Planning Toolkit."""
-    print("SorthaDevKit - Developer Toolkit (LangGraph)")
+    print("SorthaDevKit - AI Assisted AIF filling and AMP Generation")
     print("=" * 40)
-    print("🚀 Using LangGraph-based workflow...")
     
     # Create and run the LangGraph workflow
     workflow = create_langgraph_workflow(Input)
