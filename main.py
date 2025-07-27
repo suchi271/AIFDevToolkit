@@ -33,11 +33,14 @@ def main():
             print("Generated outputs:")
             if 'output_files' in result.data:
                 output_files = result.data['output_files']
-                if 'migration_plans' in output_files and output_files['migration_plans']:
-                    for file_type, file_path in output_files['migration_plans'].items():
-                        print(f"  ✓ {file_type.title()} migration plan: {file_path}")
+                if 'assessment_report' in output_files and output_files['assessment_report']:
+                    print(f"  ✓ Application Assessment Report generated")
                 if 'qa_report' in output_files and output_files['qa_report']:
                     print(f"  ✓ Q&A analysis report: output/filled_aif.xlsx")
+                if 'migration_plans' in output_files and output_files['migration_plans']:
+                    for file_type, file_path in output_files['migration_plans'].items():
+                        if file_type != 'assessment_report':  # Avoid double-counting
+                            print(f"  ✓ {file_type.title()} migration plan: {file_path}")
     else:
         print("\n[ERROR] Migration plan generation failed:")
         for error in result.errors:

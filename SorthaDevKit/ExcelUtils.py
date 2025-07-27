@@ -440,7 +440,17 @@ class ExcelProcessor:
                 ws_qa.cell(row=row, column=2, value=qa.answer)
                 ws_qa.cell(row=row, column=3, value=qa.confidence)
                 ws_qa.cell(row=row, column=4, value=qa.source_reference)
-                ws_qa.cell(row=row, column=5, value="Answered" if qa.is_answered else "Unanswered")
+                
+                # Determine status more intelligently
+                # Consider confidence, source reference, and answer content
+                is_actually_answered = (
+                    qa.is_answered and 
+                    qa.confidence != "Unknown" and 
+                    qa.source_reference not in ["N/A", "", "None", None] and
+                    qa.answer not in ["Not addressed in transcript", "Error in analysis", "No answer provided", "Not found", ""]
+                )
+                
+                ws_qa.cell(row=row, column=5, value="Answered" if is_actually_answered else "Not Answered")
                 
                 # Color coding based on confidence
                 if qa.confidence == "High":
@@ -453,7 +463,7 @@ class ExcelProcessor:
                     ws_qa.cell(row=row, column=3).fill = openpyxl.styles.PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
                 
                 # Color coding for status
-                if qa.is_answered:
+                if is_actually_answered:
                     ws_qa.cell(row=row, column=5).fill = openpyxl.styles.PatternFill(start_color="90EE90", end_color="90EE90", fill_type="solid")
                 else:
                     ws_qa.cell(row=row, column=5).fill = openpyxl.styles.PatternFill(start_color="FFB6C1", end_color="FFB6C1", fill_type="solid")
@@ -462,15 +472,22 @@ class ExcelProcessor:
             ws_summary = wb.create_sheet(title="Summary")
             
             total_questions = len(excel_output.questions_answers)
-            answered_questions = len([qa for qa in excel_output.questions_answers if qa.is_answered])
-            unanswered_questions = total_questions - answered_questions
+            # Calculate actually answered questions using the same intelligent logic
+            actually_answered_questions = len([
+                qa for qa in excel_output.questions_answers 
+                if (qa.is_answered and 
+                    qa.confidence != "Unknown" and 
+                    qa.source_reference not in ["N/A", "", "None", None] and
+                    qa.answer not in ["Not addressed in transcript", "Error in analysis", "No answer provided", "Not found", ""])
+            ])
+            unanswered_questions = total_questions - actually_answered_questions
             
             # Summary data focusing on core metrics
             summary_data = [
                 ["Total Questions", total_questions],
-                ["Answered Questions", answered_questions],
+                ["Answered Questions", actually_answered_questions],
                 ["Unanswered Questions", unanswered_questions],
-                ["Answer Rate", f"{(answered_questions/total_questions*100):.1f}%" if total_questions > 0 else "0%"],
+                ["Answer Rate", f"{(actually_answered_questions/total_questions*100):.1f}%" if total_questions > 0 else "0%"],
                 ["", ""],
                 ["Confidence Distribution", ""],
                 ["High Confidence", len([qa for qa in excel_output.questions_answers if qa.confidence == "High"])],
@@ -495,7 +512,14 @@ class ExcelProcessor:
             
             unanswered_count = 2
             for qa in excel_output.questions_answers:
-                if not qa.is_answered:
+                # Use the same intelligent logic to determine if question is actually unanswered
+                is_actually_answered = (
+                    qa.is_answered and 
+                    qa.confidence != "Unknown" and 
+                    qa.source_reference not in ["N/A", "", "None", None] and
+                    qa.answer not in ["Not addressed in transcript", "Error in analysis", "No answer provided", "Not found", ""]
+                )
+                if not is_actually_answered:
                     ws_unanswered.cell(row=unanswered_count, column=1, value=qa.question)
                     unanswered_count += 1
             

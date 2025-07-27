@@ -15,6 +15,7 @@ from SorthaDevKit.StateBase import ProcessingResult, QuestionAnswer
 from SorthaDevKit.ExcelUtils import ExcelProcessor
 from SorthaDevKit.MigrationPlanGenerator import AzureMigrationPlanGenerator
 from SorthaDevKit.MigrationPlanExporter import MigrationPlanDocumentExporter
+from SorthaDevKit.AssessmentReportGenerator import ApplicationAssessmentReportGenerator
 
 
 class WorkflowState(TypedDict):
@@ -25,8 +26,10 @@ class WorkflowState(TypedDict):
     # Processing results
     azure_migrate_data: Any
     questions_answers: List[QuestionAnswer]
+    assessment_report_data: Any
     migration_plan: Any
     qa_export_success: bool
+    assessment_export_success: bool
     plan_files: Dict[str, str]
     
     # Workflow metadata
@@ -43,6 +46,7 @@ class LangGraphMigrationPlanWorkflow:
         self.inputs = inputs
         self.migration_plan_generator = AzureMigrationPlanGenerator()
         self.document_exporter = MigrationPlanDocumentExporter()
+        self.assessment_report_generator = ApplicationAssessmentReportGenerator()
         
         # Create the graph
         self.graph = self._create_workflow_graph()
@@ -58,8 +62,10 @@ class LangGraphMigrationPlanWorkflow:
         workflow.add_node("setup_llm", self._setup_llm_node)
         workflow.add_node("process_azure_migrate", self._process_azure_migrate_node)
         workflow.add_node("process_questions", self._process_questions_node)
+        workflow.add_node("generate_assessment_report", self._generate_assessment_report_node)
         workflow.add_node("generate_plan", self._generate_plan_node)
         workflow.add_node("export_qa", self._export_qa_node)
+        workflow.add_node("export_assessment_report", self._export_assessment_report_node)
         workflow.add_node("export_documents", self._export_documents_node)
         workflow.add_node("finalize", self._finalize_node)
         
@@ -90,7 +96,8 @@ class LangGraphMigrationPlanWorkflow:
                 "end": END
             }
         )
-        workflow.add_edge("process_questions", "generate_plan")
+        workflow.add_edge("process_questions", "generate_assessment_report")
+        workflow.add_edge("generate_assessment_report", "generate_plan")
         workflow.add_conditional_edges(
             "generate_plan",
             self._should_continue_after_plan,
@@ -99,6 +106,12 @@ class LangGraphMigrationPlanWorkflow:
                 "end": END
             }
         )
+        workflow.add_edge("export_qa", "export_assessment_report")
+        workflow.add_edge("export_assessment_report", "export_documents")
+        workflow.add_edge("export_documents", "finalize")
+        workflow.add_edge("finalize", END)
+        
+        return workflow
         workflow.add_edge("export_qa", "export_documents")
         workflow.add_edge("export_documents", "finalize")
         workflow.add_edge("finalize", END)
@@ -115,6 +128,7 @@ class LangGraphMigrationPlanWorkflow:
         state["errors"] = []
         state["step_completed"] = {}
         state["qa_export_success"] = False
+        state["assessment_export_success"] = False
         state["plan_files"] = {}
         
         print("✓ Modules loaded")
@@ -282,9 +296,9 @@ class LangGraphMigrationPlanWorkflow:
         
         return state
     
-    def _generate_plan_node(self, state: WorkflowState) -> WorkflowState:
-        """Generate comprehensive migration plan."""
-        print("Generating comprehensive migration plan...")
+    def _generate_assessment_report_node(self, state: WorkflowState) -> WorkflowState:
+        """Generate application assessment report."""
+        print("Generating application assessment report...")
         
         try:
             # Extract project name from questions if available
@@ -294,6 +308,85 @@ class LangGraphMigrationPlanWorkflow:
                     if qa.answer and len(qa.answer) > 3:
                         project_name = qa.answer[:50]  # Limit length
                         break
+            
+            # Generate assessment report data
+            assessment_data = self.assessment_report_generator.generate_assessment_report(
+                questions_answers=state["questions_answers"],
+                azure_migrate_data=state.get("azure_migrate_data"),
+                project_name=project_name,
+                llm_client=state.get("llm_client")
+            )
+            
+            if assessment_data:
+                state["assessment_report_data"] = assessment_data
+                print("✓ Generated application assessment report")
+                state["step_completed"]["generate_assessment_report"] = True
+            else:
+                error = "Failed to generate assessment report"
+                print(error)
+                state["errors"].append(error)
+                
+        except Exception as e:
+            error = f"Error generating assessment report: {str(e)}"
+            print(error)
+            state["errors"].append(error)
+        
+        return state
+    
+    def _generate_plan_node(self, state: WorkflowState) -> WorkflowState:
+        """Generate comprehensive migration plan."""
+        print("Generating comprehensive migration plan...")
+        
+        try:
+            # Extract project name from questions if available - using improved extraction
+            project_name = "Azure Migration Project"
+            
+            # Look for questions about application name, project name, or system name
+            name_keywords = ['application name', 'app name', 'system name', 'project name', 'service name', 'what is the name']
+            
+            for qa in state["questions_answers"]:
+                if qa.is_answered and qa.answer and qa.answer != "Not addressed in transcript":
+                    question_lower = qa.question.lower()
+                    if any(keyword in question_lower for keyword in name_keywords):
+                        # Clean up the answer and extract just the name
+                        app_name = qa.answer.strip()
+                        
+                        # Try to extract just the application name from common patterns
+                        
+                        # Pattern 1: "The application name mentioned in the conversation is "Name""
+                        import re
+                        match = re.search(r'(?:application name|name).*?is\s*["\']?([^"\'.\n,]+)["\']?', app_name, re.IGNORECASE)
+                        if match:
+                            extracted_name = match.group(1).strip()
+                            # Further clean the extracted name
+                            clean_name = re.sub(r'[^\w\s-]', '', extracted_name).strip()
+                            if len(clean_name) > 1 and len(clean_name) < 50:
+                                project_name = clean_name
+                                break
+                        
+                        # Pattern 2: Look for quoted names
+                        match = re.search(r'["\']([^"\']+)["\']', app_name)
+                        if match:
+                            extracted_name = match.group(1).strip()
+                            clean_name = re.sub(r'[^\w\s-]', '', extracted_name).strip()
+                            if len(clean_name) > 1 and len(clean_name) < 50:
+                                project_name = clean_name
+                                break
+                        
+                        # Pattern 3: Look for capitalized words that could be application names
+                        words = app_name.split()
+                        for word in words:
+                            # Skip common filler words
+                            if word.lower() not in ['the', 'application', 'name', 'mentioned', 'in', 'conversation', 'is', 'called', 'system', 'project', 'service', 'transcript', 'discussion', 'meeting']:
+                                clean_word = re.sub(r'[^\w-]', '', word)
+                                # Look for words that start with capital letter or are all caps (likely names)
+                                if len(clean_word) > 1 and len(clean_word) < 50 and (clean_word[0].isupper() or clean_word.isupper()):
+                                    project_name = clean_word
+                                    break
+                        
+                        # If we found a name, break out of the outer loop
+                        if project_name != "Azure Migration Project":
+                            break
             
             migration_plan = self.migration_plan_generator.generate_migration_plan(
                 azure_migrate_data=state["azure_migrate_data"],
@@ -373,6 +466,56 @@ class LangGraphMigrationPlanWorkflow:
         
         return state
     
+    def _export_assessment_report_node(self, state: WorkflowState) -> WorkflowState:
+        """Export application assessment report to Word document."""
+        print("Exporting application assessment report...")
+        
+        try:
+            if "assessment_report_data" not in state or not state["assessment_report_data"]:
+                print("⚠ No assessment report data available, skipping export")
+                state["assessment_export_success"] = False
+                state["step_completed"]["export_assessment_report"] = True
+                return state
+            
+            # Determine output path
+            output_dir = "output"
+            os.makedirs(output_dir, exist_ok=True)
+            
+            # Use fixed filename that overwrites previous versions
+            assessment_filename = "application_assessment_report.docx"
+            assessment_output_path = os.path.join(output_dir, assessment_filename)
+            
+            # Export assessment report (template is now embedded)
+            success = self.assessment_report_generator.export_to_word(
+                assessment_data=state["assessment_report_data"],
+                output_path=assessment_output_path
+            )
+            
+            if success:
+                print(f"✓ Assessment report saved: {assessment_output_path}")
+                state["assessment_export_success"] = True
+                
+                # Add to plan files for reference
+                if "plan_files" not in state:
+                    state["plan_files"] = {}
+                state["plan_files"]["assessment_report"] = assessment_output_path
+            else:
+                error = "Failed to export assessment report"
+                print(error)
+                state["errors"].append(error)
+                state["assessment_export_success"] = False
+            
+            state["step_completed"]["export_assessment_report"] = True
+            
+        except Exception as e:
+            error = f"Error exporting assessment report: {str(e)}"
+            print(error)
+            state["errors"].append(error)
+            state["assessment_export_success"] = False
+            state["step_completed"]["export_assessment_report"] = True  # Continue even if this fails
+        
+        return state
+    
     def _export_documents_node(self, state: WorkflowState) -> WorkflowState:
         """Export migration plan documents."""
         print("Exporting migration plan documents...")
@@ -419,11 +562,13 @@ class LangGraphMigrationPlanWorkflow:
                 (f" (with {len(state['errors'])} non-critical warnings)" if state["errors"] else ""),
                 {
                     "migration_plan": state["migration_plan"],
+                    "assessment_report_data": state.get("assessment_report_data"),
                     "azure_migrate_data": state["azure_migrate_data"],
                     "questions_answers": state["questions_answers"],
                     "output_files": {
                         "migration_plans": state["plan_files"],
-                        "qa_report": state["qa_export_success"]
+                        "qa_report": state["qa_export_success"],
+                        "assessment_report": state.get("assessment_export_success", False)
                     }
                 }
             )
@@ -694,8 +839,20 @@ class LangGraphMigrationPlanWorkflow:
         total_files = len(state["plan_files"])
         if state["qa_export_success"]:
             total_files += 1  # Add Q&A report
+        if state.get("assessment_export_success"):
+            total_files += 1  # Add Assessment report
             
         print(f"✓ Generated {total_files} output files in the output/ directory")
+        
+        # Print specific file information
+        if state.get("assessment_export_success"):
+            print("✓ Generated Application Assessment Report")
+        if state["qa_export_success"]:
+            print("✓ Generated Q&A Analysis Report")
+        for file_type, file_path in state["plan_files"].items():
+            if file_type != "assessment_report":  # Don't double-count
+                print(f"✓ Generated {file_type.replace('_', ' ').title()}: {os.path.basename(file_path)}")
+        
         if state.get("migration_plan") and hasattr(state["migration_plan"], 'azure_migrate_data'):
             print(f"✓ Processed {len(state['migration_plan'].azure_migrate_data.servers)} servers")
             print(f"✓ Created {len(state['migration_plan'].migration_waves)} migration waves")
@@ -712,8 +869,10 @@ class LangGraphMigrationPlanWorkflow:
                 inputs=self.inputs,
                 azure_migrate_data=None,
                 questions_answers=[],
+                assessment_report_data=None,
                 migration_plan=None,
                 qa_export_success=False,
+                assessment_export_success=False,
                 plan_files={},
                 result=ProcessingResult(),
                 llm_client=None,

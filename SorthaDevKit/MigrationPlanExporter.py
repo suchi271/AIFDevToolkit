@@ -105,6 +105,35 @@ class MigrationPlanDocumentExporter:
             heading_font.name = 'Calibri'
             heading_font.color.rgb = None  # Use default color
     
+    def _add_formatted_paragraph(self, doc, content: str):
+        """Add a paragraph with proper formatting, converting markdown bold to Word bold."""
+        if not content:
+            return
+        
+        # Split content by lines to handle each line separately
+        lines = content.split('\n')
+        
+        for line in lines:
+            if not line.strip():
+                doc.add_paragraph("")  # Add empty paragraph for spacing
+                continue
+                
+            para = doc.add_paragraph()
+            
+            # Split line by ** markers to identify bold sections
+            parts = line.split('**')
+            
+            for i, part in enumerate(parts):
+                if i % 2 == 0:
+                    # Even index = regular text
+                    if part:
+                        para.add_run(part)
+                else:
+                    # Odd index = bold text
+                    if part:
+                        run = para.add_run(part)
+                        run.bold = True
+    
     def _add_title_page(self, doc, migration_plan):
         """Add title page to document."""
         if not self.docx_available:
@@ -164,11 +193,11 @@ class MigrationPlanDocumentExporter:
         doc.add_heading('1. Executive Summary', level=1)
         
         # Executive summary content
-        doc.add_paragraph(migration_plan.executive_summary)
+        self._add_formatted_paragraph(doc, migration_plan.executive_summary)
         
         # Business case
         doc.add_heading('1.1 Business Case', level=2)
-        doc.add_paragraph(migration_plan.business_case)
+        self._add_formatted_paragraph(doc, migration_plan.business_case)
         
         # Key metrics
         doc.add_heading('1.2 Key Metrics', level=2)
@@ -259,7 +288,7 @@ class MigrationPlanDocumentExporter:
         
         # Overall approach
         doc.add_heading('4.1 Migration Approach', level=2)
-        doc.add_paragraph(migration_plan.migration_approach)
+        self._add_formatted_paragraph(doc, migration_plan.migration_approach)
         
         # Migration waves overview
         doc.add_heading('4.2 Migration Waves Overview', level=2)
