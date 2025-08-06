@@ -2,15 +2,15 @@ from SorthaDevKit.StateBase import FileInputType, FileTypes
 
 Input = {
     "transcript": FileInputType(
-        file_path=r"C:\Users\smalisetty\OneDrive - Microsoft\Suchi\MSResearch\DeveloperToolkit\input\sample_transcript.txt",
+        file_path=r"C:\Users\smalisetty\OneDrive - Microsoft\Suchi\MSResearch\DeveloperToolkit\input\app_interview_transcript.txt",
         type=FileTypes.TEXT
     ),
     "questions_excel": FileInputType(
-        file_path=r"C:\Users\smalisetty\OneDrive - Microsoft\Suchi\MSResearch\DeveloperToolkit\input\questions_new.xlsx",
+        file_path=r"C:\Users\smalisetty\OneDrive - Microsoft\Suchi\MSResearch\DeveloperToolkit\input\aif_unfilled.xlsx",
         type=FileTypes.EXCEL
     ),
     "azure_migrate_report": FileInputType(
-        file_path=r"C:\Users\smalisetty\OneDrive - Microsoft\Suchi\MSResearch\DeveloperToolkit\input\Azure-Migrate-Report.xlsx",
+        file_path=r"C:\Users\smalisetty\OneDrive - Microsoft\Suchi\MSResearch\DeveloperToolkit\input\azure_migrate_assessment.xlsx",
         type=FileTypes.EXCEL
     )
 }
