@@ -7,29 +7,23 @@ import json
 import re
 from .StateBase import WorkflowState, ProcessingResult, QuestionAnswer, ExcelOutputType
 
-# Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 T = TypeVar('T', bound=WorkflowState)
 
 class StateGraph:
-    """State graph implementation with add_node and add_edge methods."""
-    
     def __init__(self):
         self.nodes = {}
         self.edges = []
     
     def add_node(self, node_name: str, node_function: Callable):
-        """Add a node to the graph."""
         self.nodes[node_name] = node_function
     
     def add_edge(self, from_node: str, to_node: str):
-        """Add an edge between two nodes."""
         self.edges.append((from_node, to_node))
     
     def __getitem__(self, key):
-        """Allow dictionary-style access for backward compatibility."""
         if key == "nodes":
             return self.nodes
         elif key == "edges":
@@ -38,10 +32,7 @@ class StateGraph:
             raise KeyError(f"Unknown key: {key}")
 
 class WorkFlowBase(ABC):
-    """Base class for all workflows in the SorthaDevKit."""
-    
     def __init__(self, name: str = "BaseWorkflow"):
-        """Initialize the workflow."""
         self.name = name
         self.state: Optional[WorkflowState] = None
         self.steps: List[str] = []
@@ -170,7 +161,7 @@ class WorkFlowBase(ABC):
         return status
 
 class QuestionAnsweringWorkFlowBase(WorkFlowBase):
-    """Base class for question-answering workflows with common functionality."""
+    """Base class for AIF filling workflows with common functionality."""
     
     def __init__(self, name: str = "QAWorkflow"):
         """Initialize the QA workflow."""
@@ -279,7 +270,7 @@ class QuestionAnsweringWorkFlowBase(WorkFlowBase):
                 self.add_error("No questions found in Excel file")
                 return False
                 
-            print(f"Questions loaded: {len(self.questions)}")
+            # Suppressed: print(f"Questions loaded: {len(self.questions)}")
             return True
             
         except Exception as e:
@@ -323,7 +314,6 @@ Provide only the JSON response, no additional text.
     def parse_llm_response(self, question: str, llm_response: str) -> QuestionAnswer:
         """Parse LLM response into QuestionAnswer object with robust error handling."""
         try:
-            # Try to extract JSON from the response
             json_match = re.search(r'\{.*\}', llm_response, re.DOTALL)
             if json_match:
                 response_data = json.loads(json_match.group())
@@ -336,7 +326,6 @@ Provide only the JSON response, no additional text.
                     is_answered=response_data.get('is_answered', False)
                 )
             else:
-                # Fallback parsing if JSON extraction fails
                 return QuestionAnswer(
                     question=question,
                     answer=llm_response.strip(),
@@ -346,7 +335,6 @@ Provide only the JSON response, no additional text.
                 )
                 
         except Exception as e:
-            # Error fallback
             self.logger.error(f"Failed to parse LLM response: {str(e)}")
             return QuestionAnswer(
                 question=question,
@@ -366,9 +354,7 @@ Provide only the JSON response, no additional text.
                 raise ValueError("Transcript content not loaded")
             
             # Show progress if requested
-            if show_progress and total_questions > 0:
-                if question_index == 0 or (question_index + 1) % 5 == 0 or question_index == total_questions - 1:
-                    print(f"  Processing question {question_index + 1}/{total_questions}: {question[:50]}...")
+            # Suppressed per-question progress output
 
             # Create prompt and get LLM response
             prompt = self.create_question_prompt(question, self.transcript_content)
@@ -406,14 +392,14 @@ Provide only the JSON response, no additional text.
             return []
         
         try:
-            print(f"Processing {len(questions)} questions")
+            # Suppressed batch processing output
             questions_answers = []
             
             for i, question in enumerate(questions):
                 qa = self.process_single_question(question, True, i, len(questions))
                 questions_answers.append(qa)
             
-            print(f"Completed processing {len(questions_answers)} questions")
+            # Suppressed batch completion output
             return questions_answers
             
         except Exception as e:
@@ -472,17 +458,3 @@ Provide only the JSON response, no additional text.
             "processing_time": getattr(self._processing_stats, 'processing_time', 'Unknown'),
             "timestamp": datetime.now().isoformat()
         }
-
-    def load_transcript(self, file_path: str) -> bool:
-        """Load transcript from file."""
-        return self.load_transcript_from_file(file_path)
-    
-    def load_questions(self, questions_data: List[Dict[str, Any]]) -> bool:
-        """Load questions for processing."""
-        try:
-            self.questions = questions_data
-            print(f"Questions loaded: {len(self.questions)}")
-            return True
-        except Exception as e:
-            self.add_error(f"Failed to load questions: {str(e)}")
-            return False
