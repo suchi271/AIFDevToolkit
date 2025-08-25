@@ -722,9 +722,6 @@ class ExcelProcessor:
                     mapped_columns[standard_name] = df.columns[df_columns_lower.index(variation)]
                     break
         
-        print(f"DEBUG: Found columns in {sheet_name}: {list(df.columns)}")
-        print(f"DEBUG: Mapped columns: {mapped_columns}")
-        
         # Process each row
         for _, row in df.iterrows():
             try:
@@ -786,7 +783,6 @@ class ExcelProcessor:
                 print(f"Warning: Error parsing connection row: {e}")
                 continue
         
-        print(f"DEBUG: Parsed {len(connections)} connections from {sheet_name}")
         return connections
 
     @staticmethod

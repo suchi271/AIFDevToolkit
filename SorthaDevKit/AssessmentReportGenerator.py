@@ -1233,7 +1233,8 @@ Ensure the justification explains why the other approaches were not selected."""
         
         # Add Low Level Design section
         page_num += 1
-        toc_lines.append(f"5.4\tLow Level Design - Network Traffic Analysis" + "." * 25 + f"{page_num}")
+        low_level_section_num = len(environments) + 1
+        toc_lines.append(f"5.{low_level_section_num}\tLow Level Design - Network Traffic Analysis" + "." * 25 + f"{page_num}")
         
         # Continue with static sections
         page_num += 1
@@ -2258,7 +2259,18 @@ Make rationale highly specific to this application, referencing actual technolog
         return contacts
     
     def _calculate_azure_costs(self, azure_services: Dict[str, Any], tech_stack: Dict[str, Any], deployment_method: str) -> tuple:
-        """Calculate Azure costs using intelligent analysis based on application requirements."""
+        """Calculate Azure costs using intelligent analysis based on application requirements and Azure Migrate data."""
+        
+        # Try to load Azure Migrate assessment data first
+        azure_migrate_data = self._load_azure_migrate_assessment()
+        
+        # Test integration
+        if azure_migrate_data:
+            print(" Azure Migrate data loaded for cost calculation:")
+            print(f"   Machines: {azure_migrate_data.get('machine_count', 0)}")
+            print(f"   Total cost: ${azure_migrate_data.get('total_monthly_cost', 0):.2f}/month")
+        else:
+            print("ℹ️  No Azure Migrate data found, using generic cost estimates")
         
         # Prepare context for AI-driven cost analysis
         context_data = {
@@ -2271,7 +2283,8 @@ Make rationale highly specific to this application, referencing actual technolog
             "containers": tech_stack.get('containers', False),
             "cloud_ready": tech_stack.get('cloud_ready', False),
             "architecture_type": tech_stack.get('architecture_type', 'unknown'),
-            "modernization_level": tech_stack.get('modernization_level', 'unknown')
+            "modernization_level": tech_stack.get('modernization_level', 'unknown'),
+            "azure_migrate_data": azure_migrate_data
         }
         
         prompt = """
@@ -2285,6 +2298,9 @@ Base your cost analysis on:
 - Networking complexity based on architecture
 - Security requirements based on application context
 - Monitoring needs based on technology stack
+- Azure Migrate assessment data (if available)
+
+IMPORTANT: If Azure Migrate assessment data is provided in the context, use the actual machine specifications, recommended SKUs, and cost estimates from that data as the foundation for your cost analysis. The Azure Migrate data should take precedence over generic estimates.
 
 Provide realistic monthly cost estimates in USD for a production environment.
 
@@ -2304,7 +2320,8 @@ Return as JSON:
         "optimization_opportunities": [
             "Cost optimization opportunity 1",
             "Cost optimization opportunity 2"
-        ]
+        ],
+        "azure_migrate_summary": "Summary of Azure Migrate data usage (if available)"
     }
 }
 
@@ -2321,7 +2338,7 @@ Consider these Azure services and their typical cost ranges:
 - Azure Storage: $20-$200/month based on volume and access patterns
 - Azure Virtual Network: $20-$100/month based on complexity
 
-Adjust estimates based on the specific technology stack and architecture complexity identified.
+If Azure Migrate data is available, prioritize those actual assessments and add additional Azure services as needed for a complete solution.
 """
         
         ai_response = self._generate_ai_content(prompt, context_data)
@@ -2346,25 +2363,121 @@ Adjust estimates based on the specific technology stack and architecture complex
         # Fallback to technology-based cost calculation if AI parsing fails
         return self._fallback_cost_calculation(azure_services, tech_stack, deployment_method)
     
+    def _load_azure_migrate_assessment(self) -> Dict[str, Any]:
+        """Load cost and SKU data from Azure Migrate assessment Excel file."""
+        try:
+            import pandas as pd
+            import os
+            
+            # Path to Azure migrate assessment file
+            assessment_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'input', 'azure_migrate_assessment.xlsx')
+            
+            if not os.path.exists(assessment_file):
+                print(f"Azure migrate assessment file not found: {assessment_file}")
+                return {}
+            
+            # Read the All_Assessed_Machines sheet
+            df = pd.read_excel(assessment_file, sheet_name='All_Assessed_Machines')
+            
+            # Extract relevant cost and SKU data
+            machines_data = []
+            for _, row in df.iterrows():
+                machine_data = {
+                    'machine_name': row.get('Machine', 'Unknown'),
+                    'recommended_size': row.get('Recommended size', 'Unknown'),
+                    'compute_monthly_cost': row.get('Compute monthly cost estimate USD', 0),
+                    'storage_monthly_cost': row.get('Storage monthly cost estimate USD', 0),
+                    'operating_system': row.get('Operating system', 'Unknown'),
+                    'cores': row.get('Cores', 0),
+                    'memory_mb': row.get('Memory(MB)', 0),
+                    'storage_gb': row.get('Storage(GB)', 0),
+                    'azure_readiness': row.get('Azure VM readiness', 'Unknown'),
+                    'readiness_issues': row.get('Azure readiness issues', '')
+                }
+                machines_data.append(machine_data)
+            
+            # Calculate totals
+            total_compute_cost = sum(m['compute_monthly_cost'] for m in machines_data if isinstance(m['compute_monthly_cost'], (int, float)))
+            total_storage_cost = sum(m['storage_monthly_cost'] for m in machines_data if isinstance(m['storage_monthly_cost'], (int, float)))
+            total_monthly_cost = total_compute_cost + total_storage_cost
+            
+            return {
+                'machines': machines_data,
+                'total_compute_cost': total_compute_cost,
+                'total_storage_cost': total_storage_cost,
+                'total_monthly_cost': total_monthly_cost,
+                'machine_count': len(machines_data)
+            }
+            
+        except Exception as e:
+            print(f"Error loading Azure migrate assessment data: {e}")
+            return {}
+    
+    def _test_azure_migrate_integration(self):
+        """Test method to verify Azure Migrate data loading."""
+        data = self._load_azure_migrate_assessment()
+        if data:
+            print(" Azure Migrate Integration Test:")
+            print(f"   Found {data.get('machine_count', 0)} machines")
+            print(f"   Total monthly cost: ${data.get('total_monthly_cost', 0):.2f}")
+            for i, machine in enumerate(data.get('machines', [])[:3]):  # Show first 3
+                print(f"   Machine {i+1}: {machine.get('machine_name')} -> {machine.get('recommended_size')} (${machine.get('compute_monthly_cost', 0):.2f}/month)")
+        else:
+            print(" Azure Migrate Integration Test: No data loaded")
+    
     def _fallback_cost_calculation(self, azure_services: Dict[str, Any], tech_stack: Dict[str, Any], deployment_method: str) -> tuple:
-        """Fallback cost calculation based on technology stack analysis."""
+        """Fallback cost calculation based on technology stack analysis and Azure Migrate data if available."""
+        
+        # Try to get Azure Migrate data
+        azure_migrate_data = self._load_azure_migrate_assessment()
+        
         total_min_cost = 0
         total_max_cost = 0
         cost_breakdown = []
         
-        # Compute service costs based on deployment method and technology
-        if deployment_method == "kubernetes" or tech_stack.get('containers'):
-            cost_breakdown.append("| Azure Kubernetes Service (AKS) | $300 - $800 |")
-            total_min_cost += 300
-            total_max_cost += 800
-        elif tech_stack.get('cloud_ready') and tech_stack.get('frameworks'):
-            cost_breakdown.append("| Azure App Service (Premium) | $200 - $500 |")
-            total_min_cost += 200
-            total_max_cost += 500
+        # If Azure Migrate data is available, use it as the foundation
+        if azure_migrate_data and azure_migrate_data.get('machines'):
+            print(f"Using Azure Migrate assessment data for {azure_migrate_data.get('machine_count', 0)} machines")
+            
+            # Add detailed Azure Migrate assessment breakdown
+            machine_count = azure_migrate_data.get('machine_count', 0)
+            compute_cost = azure_migrate_data.get('total_compute_cost', 0)
+            storage_cost = azure_migrate_data.get('total_storage_cost', 0)
+            
+            if compute_cost > 0:
+                cost_breakdown.append(f"| Azure VMs (Azure Migrate Assessment - {machine_count} machines) | ${compute_cost:.2f} - ${compute_cost * 1.2:.2f} |")
+                total_min_cost += compute_cost
+                total_max_cost += compute_cost * 1.2  # Add 20% buffer for variations
+            
+            if storage_cost > 0:
+                cost_breakdown.append(f"| Azure Storage (Azure Migrate Assessment) | ${storage_cost:.2f} - ${storage_cost * 1.3:.2f} |")
+                total_min_cost += storage_cost
+                total_max_cost += storage_cost * 1.3  # Add 30% buffer for additional storage needs
+            
+            # Add detailed machine SKU recommendations to cost breakdown
+            cost_breakdown.append("| **Azure Migrate Machine Recommendations** | |")
+            for machine in azure_migrate_data.get('machines', []):
+                machine_name = machine.get('machine_name', 'Unknown')
+                recommended_size = machine.get('recommended_size', 'Unknown')
+                monthly_cost = machine.get('compute_monthly_cost', 0) + machine.get('storage_monthly_cost', 0)
+                cost_breakdown.append(f"| - {machine_name} → {recommended_size} | ${monthly_cost:.2f}/month |")
+                print(f"  - {machine_name}: {recommended_size} (${machine.get('compute_monthly_cost', 0):.2f}/month)")
         else:
-            cost_breakdown.append("| Azure Virtual Machines | $400 - $800 |")
-            total_min_cost += 400
-            total_max_cost += 800
+            print("No Azure Migrate data found, using technology-based cost estimates")
+            
+            # Compute service costs based on deployment method and technology
+            if deployment_method == "kubernetes" or tech_stack.get('containers'):
+                cost_breakdown.append("| Azure Kubernetes Service (AKS) | $300 - $800 |")
+                total_min_cost += 300
+                total_max_cost += 800
+            elif tech_stack.get('cloud_ready') and tech_stack.get('frameworks'):
+                cost_breakdown.append("| Azure App Service (Premium) | $200 - $500 |")
+                total_min_cost += 200
+                total_max_cost += 500
+            else:
+                cost_breakdown.append("| Azure Virtual Machines | $400 - $800 |")
+                total_min_cost += 400
+                total_max_cost += 800
         
         # Database costs based on detected technologies
         db_technologies = tech_stack.get('databases', [])
@@ -4278,32 +4391,20 @@ Focus on real observability requirements mentioned, not generic recommendations.
             doc.add_paragraph(f'Figure: {env} Proposed Architecture Diagram')
             doc.add_paragraph("")  # Add spacing
         
-        # 5.4 Low Level Design - Network Traffic Analysis
-        doc.add_heading('5.4	Low Level Design - Network Traffic Analysis', 1)
+        # Dynamic Low Level Design section number
+        low_level_section_num = len(assessment_data.environments) + 1
+        doc.add_heading(f'5.{low_level_section_num}\tLow Level Design - Network Traffic Analysis', 1)
         doc.add_paragraph('Based on the comprehensive analysis of network dependency data, the following low-level design recommendations provide detailed insights into the proposed Azure architecture.')
         
         # Add detailed network analysis content
-        print(f"DEBUG: Checking target_architecture - hasattr: {hasattr(assessment_data, 'target_architecture')}")
-        if hasattr(assessment_data, 'target_architecture'):
-            print(f"DEBUG: target_architecture value: {assessment_data.target_architecture}")
-            print(f"DEBUG: target_architecture type: {type(assessment_data.target_architecture)}")
-        
         if hasattr(assessment_data, 'target_architecture') and assessment_data.target_architecture:
             try:
-                print("DEBUG: About to generate network analysis content...")
                 network_analysis_content = self._generate_comprehensive_network_analysis(assessment_data.target_architecture)
-                print(f"DEBUG: Generated content length: {len(network_analysis_content) if network_analysis_content else 0}")
-                print(f"DEBUG: Content preview: {network_analysis_content[:200] if network_analysis_content else 'None'}")
                 self._add_formatted_paragraph(doc, network_analysis_content)
-                print("DEBUG: Successfully added network analysis content to document")
             except Exception as e:
                 print(f"Warning: Error generating network analysis content: {e}")
-                print(f"DEBUG: Exception type: {type(e)}")
-                import traceback
-                traceback.print_exc()
                 doc.add_paragraph("Network traffic analysis encountered an error. Low-level design will be based on application requirements and Azure best practices.")
         else:
-            print("DEBUG: No target_architecture found - adding fallback message")
             doc.add_paragraph("Network traffic analysis data is not available. Low-level design will be based on application requirements and Azure best practices.")
         
         doc.add_paragraph("")  # Add spacing
