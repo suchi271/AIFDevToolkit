@@ -12,6 +12,10 @@ Input = {
     "azure_migrate_report": FileInputType(
         file_path=r"C:\Users\smalisetty\OneDrive - Microsoft\Suchi\MSResearch\DeveloperToolkit\input\azure_migrate_assessment.xlsx",
         type=FileTypes.EXCEL
+    ),
+    "azmigrate_dependency_analysis": FileInputType(
+        file_path=r"C:\Users\smalisetty\OneDrive - Microsoft\Suchi\MSResearch\DeveloperToolkit\input\azmigrate_dependency_analysis.xlsx",
+        type=FileTypes.EXCEL
     )
 }
 

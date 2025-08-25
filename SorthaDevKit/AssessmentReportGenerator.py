@@ -16,7 +16,7 @@ import json
 import openai
 from dotenv import load_dotenv
 
-from .StateBase import QuestionAnswer, AzureMigrateServer
+from .StateBase import QuestionAnswer, AzureMigrateServer, TargetArchitecture, SubnetRecommendation, NSGRule, LoadBalancerConfig, LoadBalancingRule
 
 # Load environment variables from .env file
 load_dotenv()
@@ -39,6 +39,7 @@ class AssessmentReportData:
     supporting_documents: List[Dict[str, str]] = field(default_factory=list)
     architecture_heatmap: List[Dict[str, str]] = field(default_factory=list)
     application_allocation: Dict[str, Any] = field(default_factory=dict)
+    target_architecture: Any = None  # Can be TargetArchitecture object or dict
     additional_backlog: List[Dict[str, str]] = field(default_factory=list)
     rbac_information: List[Dict[str, str]] = field(default_factory=list)
     azure_tagging: List[Dict[str, str]] = field(default_factory=list)
@@ -63,12 +64,16 @@ class ApplicationAssessmentReportGenerator:
     def _load_config(self) -> Dict[str, Any]:
         """Load configuration settings from .env file following MigrationPlanGenerator pattern."""
         return {
-            # AI Settings
-            "ai_temperature": float(os.getenv("AI_TEMPERATURE", os.getenv("AZURE_OPENAI_TEMPERATURE", "0.7"))),
-            "ai_max_tokens": int(os.getenv("AI_MAX_TOKENS", "2000")),
-            "ai_timeout_seconds": int(os.getenv("AI_TIMEOUT_SECONDS", "60")),
+            # AI Settings - optimized for speed
+            "ai_temperature": float(os.getenv("AI_TEMPERATURE", os.getenv("AZURE_OPENAI_TEMPERATURE", "0.3"))),  # Lower for speed
+            "ai_max_tokens": int(os.getenv("AI_MAX_TOKENS", "500")),  # Reduced for speed
+            "ai_timeout_seconds": int(os.getenv("AI_TIMEOUT_SECONDS", "30")),  # Reduced timeout
             "ai_model": os.getenv("OPENAI_MODEL", os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4")),
             "ai_api_version": os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-01"),
+            
+            # Speed optimizations
+            "enable_full_ai_generation": os.getenv("ENABLE_FULL_AI_GENERATION", "false").lower() == "true",
+            "ai_generation_mode": os.getenv("AI_GENERATION_MODE", "fast"),  # fast, balanced, comprehensive
             
             # Content Generation Preferences
             "content_style": os.getenv("CONTENT_STYLE", "professional"),
@@ -239,20 +244,670 @@ Generate the content:
             print(f"LLM analysis failed: {e}")
             return fallback_response
     
+    def _format_target_architecture_content(self, env_name: str, target_architecture: TargetArchitecture) -> str:
+        """Format target architecture data for Word document inclusion."""
+        content = f"**Network Traffic Analysis for {env_name} Environment**\n\n"
+        
+        # Generate comprehensive network analysis in the requested format
+        content += self._generate_comprehensive_network_analysis(target_architecture)
+        
+        return content
+    
+    def _generate_comprehensive_network_analysis(self, target_architecture: TargetArchitecture) -> str:
+        """Generate comprehensive network analysis using optimized LLM prompts for faster generation."""
+        
+        # Quick check for valid data
+        network_connections = getattr(target_architecture, 'network_connections', []) or []
+        if not network_connections:
+            return self._generate_fallback_network_analysis(target_architecture)
+        
+        # Prepare minimal context data for faster processing
+        context_data = self._prepare_minimal_network_context(target_architecture)
+        
+        # Use a simplified, faster prompt
+        network_analysis_prompt = f"""Generate a concise Low Level Design - Network Traffic Analysis section for Azure migration.
+
+Based on {len(network_connections)} network connections analyzed, create a professional section with:
+
+1. **🏗️ Network Architecture Analysis** - List subnet recommendations, NSG rules, and load balancer configs
+2. **💻 Compute Recommendations** - Azure service recommendations for discovered applications  
+3. **📋 Network Diagram Description** - Brief architecture overview
+
+Keep it concise and technical. Use the actual numbers: {context_data['summary_stats']}
+
+Generate 200-300 words maximum focusing on actionable Azure recommendations."""
+
+        try:
+            # Generate with shorter timeout and fallback
+            generated_content = self._generate_ai_content_fast(network_analysis_prompt, context_data)
+            
+            # If generation is successful and reasonable length, use it
+            if generated_content and len(generated_content) > 100 and not generated_content.startswith("[AI Content Generation"):
+                return generated_content
+            else:
+                # Quick fallback
+                return self._generate_fallback_network_analysis(target_architecture)
+                
+        except Exception as e:
+            print(f"LLM generation failed, using fallback: {e}")
+            return self._generate_fallback_network_analysis(target_architecture)
+    
+    def _prepare_minimal_network_context(self, target_architecture: TargetArchitecture) -> Dict[str, Any]:
+        """Prepare minimal context data for faster LLM processing."""
+        
+        network_connections = getattr(target_architecture, 'network_connections', []) or []
+        subnets = getattr(target_architecture, 'subnet_recommendations', []) or []
+        nsg_rules = getattr(target_architecture, 'nsg_rules', []) or []
+        load_balancers = getattr(target_architecture, 'load_balancer_config', []) or []
+        
+        # Quick stats calculation
+        unique_ports = set()
+        unique_apps = set()
+        
+        for conn in network_connections[:20]:  # Limit to first 20 for speed
+            if hasattr(conn, 'destination_port') and conn.destination_port:
+                unique_ports.add(str(conn.destination_port))
+            if hasattr(conn, 'source_application') and conn.source_application:
+                unique_apps.add(conn.source_application)
+            if hasattr(conn, 'destination_application') and conn.destination_application:
+                unique_apps.add(conn.destination_application)
+        
+        summary_stats = f"{len(network_connections)} connections, {len(subnets)} subnets, {len(nsg_rules)} NSG rules, {len(load_balancers)} load balancers, {len(unique_ports)} unique ports, {len(unique_apps)} applications"
+        
+        return {
+            "summary_stats": summary_stats,
+            "connection_count": len(network_connections),
+            "subnet_count": len(subnets),
+            "nsg_count": len(nsg_rules),
+            "lb_count": len(load_balancers),
+            "unique_ports": list(unique_ports)[:10],  # First 10 ports
+            "unique_apps": list(unique_apps)[:10]     # First 10 apps
+        }
+    
+    def _generate_ai_content_fast(self, prompt: str, context_data: Dict[str, Any] = None) -> str:
+        """Generate AI content with optimized settings for faster response."""
+        if not self.llm_client:
+            return f"[AI Content Generation Unavailable]\n{prompt}"
+        
+        try:
+            # Simplified prompt for faster processing
+            simple_prompt = f"""Create a technical Low Level Design section for Azure migration:
+
+{prompt}
+
+Context: {context_data.get('summary_stats', '')}
+
+Be concise and technical."""
+            
+            response = self.llm_client.chat.completions.create(
+                model=self.config['ai_model'],
+                messages=[
+                    {"role": "system", "content": "You are a concise Azure migration expert. Provide brief, technical responses."},
+                    {"role": "user", "content": simple_prompt}
+                ],
+                max_tokens=800,  # Reduced from 2000
+                temperature=0.3  # Lower temperature for faster, more deterministic responses
+            )
+            
+            return response.choices[0].message.content.strip()
+            
+        except Exception as e:
+            return f"[AI Content Generation Error: {str(e)}]"
+        """Prepare comprehensive context data for LLM network analysis generation."""
+        
+        # Safely extract network connection details
+        connections_data = []
+        unique_applications = set()
+        unique_ports = set()
+        unique_source_ips = set()
+        unique_dest_ips = set()
+        
+        # Handle network connections safely
+        network_connections = getattr(target_architecture, 'network_connections', []) or []
+        
+        for conn in network_connections:
+            conn_data = {
+                "source_ip": getattr(conn, 'source_ip', 'Unknown'),
+                "destination_ip": getattr(conn, 'destination_ip', 'Unknown'),
+                "destination_port": getattr(conn, 'destination_port', 'Unknown'),
+                "source_application": getattr(conn, 'source_application', ''),
+                "destination_application": getattr(conn, 'destination_application', '')
+            }
+            connections_data.append(conn_data)
+            
+            # Collect unique values for analysis
+            if conn_data["source_application"]:
+                unique_applications.add(conn_data["source_application"])
+            if conn_data["destination_application"]:
+                unique_applications.add(conn_data["destination_application"])
+            if conn_data["destination_port"] != 'Unknown':
+                unique_ports.add(str(conn_data["destination_port"]))
+            if conn_data["source_ip"] != 'Unknown':
+                unique_source_ips.add(conn_data["source_ip"])
+            if conn_data["destination_ip"] != 'Unknown':
+                unique_dest_ips.add(conn_data["destination_ip"])
+        
+        # Safely prepare subnet recommendations data
+        subnets_data = []
+        subnet_recommendations = getattr(target_architecture, 'subnet_recommendations', []) or []
+        for subnet in subnet_recommendations:
+            subnets_data.append({
+                "name": getattr(subnet, 'name', 'Unknown'),
+                "purpose": getattr(subnet, 'purpose', 'Unknown'),
+                "address_space": getattr(subnet, 'address_space', 'Auto-allocated'),
+                "security_level": getattr(subnet, 'security_level', 'Standard')
+            })
+        
+        # Safely prepare NSG rules data
+        nsg_rules_data = []
+        nsg_rules = getattr(target_architecture, 'nsg_rules', []) or []
+        for rule in nsg_rules:
+            nsg_rules_data.append({
+                "name": getattr(rule, 'name', 'Unknown'),
+                "direction": getattr(rule, 'direction', 'Inbound'),
+                "priority": getattr(rule, 'priority', 1000),
+                "access": getattr(rule, 'access', 'Allow'),
+                "protocol": getattr(rule, 'protocol', 'TCP'),
+                "source": getattr(rule, 'source', '*'),
+                "destination": getattr(rule, 'destination', '*'),
+                "destination_port": getattr(rule, 'destination_port', '*'),
+                "description": getattr(rule, 'description', '')
+            })
+        
+        # Safely prepare load balancer data
+        load_balancers_data = []
+        load_balancer_config = getattr(target_architecture, 'load_balancer_config', []) or []
+        for lb in load_balancer_config:
+            lb_rules = []
+            for lb_rule in getattr(lb, 'rules', []):
+                lb_rules.append({
+                    "name": getattr(lb_rule, 'name', 'Unknown'),
+                    "frontend_port": getattr(lb_rule, 'frontend_port', 80),
+                    "backend_port": getattr(lb_rule, 'backend_port', 80),
+                    "protocol": getattr(lb_rule, 'protocol', 'TCP')
+                })
+            
+            load_balancers_data.append({
+                "name": getattr(lb, 'name', 'Unknown'),
+                "type": getattr(lb, 'type', 'Application'),
+                "sku": getattr(lb, 'sku', 'Standard'),
+                "rules": lb_rules
+            })
+        
+        # Analyze application patterns
+        application_patterns = self._analyze_application_patterns(unique_applications, unique_ports)
+        
+        # Calculate network metrics
+        network_metrics = {
+            "total_connections": len(network_connections),
+            "unique_applications": len(unique_applications),
+            "unique_ports": len(unique_ports),
+            "unique_source_ips": len(unique_source_ips),
+            "unique_destination_ips": len(unique_dest_ips),
+            "subnet_count": len(subnet_recommendations),
+            "nsg_rules_count": len(nsg_rules),
+            "load_balancer_count": len(load_balancer_config)
+        }
+        
+        # Port analysis
+        port_analysis = self._analyze_port_usage(unique_ports)
+        
+        return {
+            "network_metrics": network_metrics,
+            "connections_sample": connections_data[:20],  # Sample for context
+            "unique_applications": list(unique_applications),
+            "unique_ports": list(unique_ports),
+            "subnets": subnets_data,
+            "nsg_rules": nsg_rules_data[:10],  # Sample of rules
+            "load_balancers": load_balancers_data,
+            "application_patterns": application_patterns,
+            "port_analysis": port_analysis,
+            "security_insights": self._generate_security_insights(target_architecture),
+            "modernization_opportunities": self._identify_modernization_opportunities(unique_applications, unique_ports)
+        }
+    
+    def _analyze_application_patterns(self, applications: set, ports: set) -> Dict[str, Any]:
+        """Analyze application patterns for Azure service recommendations."""
+        patterns = {
+            "web_applications": [],
+            "database_applications": [],
+            "monitoring_tools": [],
+            "file_services": [],
+            "custom_applications": []
+        }
+        
+        for app in applications:
+            if not app or app in ['-', '']:
+                continue
+                
+            app_lower = app.lower()
+            if any(web in app_lower for web in ['apache', 'nginx', 'iis', 'tomcat', 'web', 'http']):
+                patterns["web_applications"].append(app)
+            elif any(db in app_lower for db in ['oracle', 'mysql', 'postgres', 'sql', 'database']):
+                patterns["database_applications"].append(app)
+            elif any(monitor in app_lower for monitor in ['agent', 'monitor', 'splunk', 'qualys']):
+                patterns["monitoring_tools"].append(app)
+            elif any(file_svc in app_lower for file_svc in ['file', 'storage', 'backup', 'ftp']):
+                patterns["file_services"].append(app)
+            else:
+                patterns["custom_applications"].append(app)
+        
+        return patterns
+    
+    def _analyze_port_usage(self, ports: set) -> Dict[str, Any]:
+        """Analyze port usage patterns for security and service recommendations."""
+        port_categories = {
+            "web_ports": [],
+            "database_ports": [],
+            "management_ports": [],
+            "custom_ports": []
+        }
+        
+        for port in ports:
+            try:
+                port_num = int(port)
+                if port_num in [80, 443, 8080, 8443, 9000, 8000]:
+                    port_categories["web_ports"].append(port_num)
+                elif port_num in [1433, 3306, 5432, 1521, 27017]:
+                    port_categories["database_ports"].append(port_num)
+                elif port_num in [22, 3389, 5985, 5986]:
+                    port_categories["management_ports"].append(port_num)
+                else:
+                    port_categories["custom_ports"].append(port_num)
+            except ValueError:
+                continue
+        
+        return {
+            "categories": port_categories,
+            "security_recommendations": self._get_port_security_recommendations(port_categories),
+            "azure_service_mapping": self._map_ports_to_azure_services(port_categories)
+        }
+    
+    def _get_port_security_recommendations(self, port_categories: Dict[str, list]) -> List[str]:
+        """Generate security recommendations based on port usage."""
+        recommendations = []
+        
+        if port_categories.get("web_ports"):
+            recommendations.append("Implement Azure Application Gateway with WAF for web traffic protection")
+            recommendations.append("Use Azure Front Door for global load balancing and DDoS protection")
+        
+        if port_categories.get("database_ports"):
+            recommendations.append("Implement private endpoints for database connectivity")
+            recommendations.append("Use Azure SQL Database with Advanced Threat Protection")
+        
+        if port_categories.get("management_ports"):
+            recommendations.append("Implement Azure Bastion for secure RDP/SSH access")
+            recommendations.append("Disable direct internet access for management ports")
+        
+        if port_categories.get("custom_ports"):
+            recommendations.append("Review custom port usage for potential service consolidation")
+            recommendations.append("Implement just-in-time (JIT) access for non-standard ports")
+        
+        return recommendations
+    
+    def _map_ports_to_azure_services(self, port_categories: Dict[str, list]) -> Dict[str, str]:
+        """Map discovered ports to recommended Azure services."""
+        service_mapping = {}
+        
+        if port_categories.get("web_ports"):
+            service_mapping["Web Services"] = "Azure App Service, Azure Container Apps, Azure Application Gateway"
+        
+        if port_categories.get("database_ports"):
+            service_mapping["Database Services"] = "Azure SQL Database, Azure Database for MySQL/PostgreSQL, Azure Cosmos DB"
+        
+        if port_categories.get("management_ports"):
+            service_mapping["Management Services"] = "Azure Bastion, Azure Virtual Machines, Azure Arc"
+        
+        return service_mapping
+    
+    def _generate_security_insights(self, target_architecture: TargetArchitecture) -> List[str]:
+        """Generate security insights based on network analysis."""
+        insights = []
+        
+        # Safely analyze open ports for security risks
+        open_ports = set()
+        nsg_rules = getattr(target_architecture, 'nsg_rules', []) or []
+        for rule in nsg_rules:
+            if getattr(rule, 'access', '').lower() == 'allow':
+                port = getattr(rule, 'destination_port', '')
+                if port:
+                    open_ports.add(str(port))
+        
+        if '3389' in open_ports or '22' in open_ports:
+            insights.append("Management ports (RDP/SSH) detected - recommend Azure Bastion implementation")
+        
+        if len(open_ports) > 10:
+            insights.append(f"Multiple open ports ({len(open_ports)}) detected - review for principle of least privilege")
+        
+        # Check for database ports
+        db_ports = {'1433', '3306', '5432', '1521', '27017'}
+        if db_ports.intersection(open_ports):
+            insights.append("Database ports detected - implement private endpoints and network isolation")
+        
+        # Load balancer security
+        load_balancer_config = getattr(target_architecture, 'load_balancer_config', []) or []
+        if len(load_balancer_config) > 0:
+            insights.append("Load balancers configured - ensure SSL termination and health monitoring")
+        
+        return insights
+    
+    def _identify_modernization_opportunities(self, applications: set, ports: set) -> List[str]:
+        """Identify modernization opportunities based on discovered applications and ports."""
+        opportunities = []
+        
+        # Container opportunities
+        web_apps = [app for app in applications if any(web in app.lower() for web in ['apache', 'nginx', 'iis', 'tomcat']) if app]
+        if web_apps:
+            opportunities.append(f"Containerization opportunity for web applications: {', '.join(web_apps[:3])}")
+        
+        # Database modernization
+        db_apps = [app for app in applications if any(db in app.lower() for db in ['mysql', 'postgres', 'sql']) if app]
+        if db_apps:
+            opportunities.append(f"Database modernization opportunity with Azure PaaS: {', '.join(db_apps[:3])}")
+        
+        # Serverless opportunities
+        if '80' in ports or '443' in ports:
+            opportunities.append("Azure Functions opportunity for lightweight HTTP-based services")
+        
+        # API Management
+        if len([p for p in ports if p in ['80', '443', '8080', '9000']]) > 1:
+            opportunities.append("Azure API Management opportunity for API consolidation and governance")
+        
+        return opportunities
+    
+    def _generate_fallback_network_analysis(self, target_architecture: TargetArchitecture) -> str:
+        """Generate fallback network analysis when LLM is unavailable."""
+        analysis = f"**Low Level Design - Network Traffic Analysis**\n\n"
+        analysis += f"Based on analysis of {len(target_architecture.network_connections)} network connections, the following Azure architecture recommendations have been generated:\n\n"
+        
+        # 🏗️ Network Architecture Analysis
+        analysis += "🏗️ **Network Architecture Analysis:**\n"
+        
+        # Subnet Recommendations
+        subnet_count = len(target_architecture.subnet_recommendations)
+        analysis += f"  • Subnet Recommendations: {subnet_count}\n"
+        for subnet in target_architecture.subnet_recommendations:
+            analysis += f"    - {subnet.name}: {subnet.purpose}\n"
+        
+        # NSG Rules
+        nsg_count = len(target_architecture.nsg_rules)
+        analysis += f"  • NSG Rules Generated: {nsg_count}\n"
+        for rule in target_architecture.nsg_rules[:5]:  # Show first 5 rules
+            analysis += f"    - {rule.name}: Port {rule.destination_port}\n"
+        if nsg_count > 5:
+            analysis += f"    - ... and {nsg_count - 5} more rules\n"
+        
+        # Load Balancer Recommendations
+        lb_count = len(target_architecture.load_balancer_config)
+        analysis += f"  • Load Balancer Recommendations: {lb_count}\n"
+        for lb in target_architecture.load_balancer_config:
+            analysis += f"    - {lb.name}: {lb.type} load balancer\n"
+        
+        analysis += "\n"
+        
+        # 💻 Compute Recommendations
+        compute_recommendations = self._extract_compute_recommendations_from_connections(target_architecture.network_connections)
+        analysis += f"💻 **Compute Recommendations: {len(compute_recommendations)}**\n"
+        for rec in compute_recommendations:
+            analysis += f"  • {rec['application']}: {rec['recommendation']}\n"
+        
+        analysis += "\n"
+        
+        # 📋 Network Diagram Description
+        analysis += "📋 **Network Diagram Description:**\n"
+        analysis += self._generate_network_diagram_description(target_architecture)
+        
+        return analysis
+    
+    def _extract_compute_recommendations_from_connections(self, network_connections: List) -> List[Dict[str, str]]:
+        """Extract compute service recommendations from network connections."""
+        recommendations = []
+        applications_seen = set()
+        
+        # Extract unique applications from network connections
+        for conn in network_connections:
+            apps_to_analyze = []
+            
+            if hasattr(conn, 'source_application') and conn.source_application and conn.source_application.strip():
+                apps_to_analyze.append(conn.source_application.strip())
+            
+            if hasattr(conn, 'destination_application') and conn.destination_application and conn.destination_application.strip():
+                apps_to_analyze.append(conn.destination_application.strip())
+            
+            for app in apps_to_analyze:
+                if app and app not in applications_seen and app != '-' and len(app) > 2:
+                    applications_seen.add(app)
+                    
+                    # Generate Azure service recommendation based on application type
+                    recommendation = self._get_azure_service_recommendation(app, conn)
+                    recommendations.append({
+                        'application': app,
+                        'recommendation': recommendation
+                    })
+        
+        # Add standard connectivity recommendations
+        if len(network_connections) > 50:  # If substantial network traffic
+            recommendations.extend([
+                {
+                    'application': 'Hybrid Connectivity',
+                    'recommendation': 'Azure ExpressRoute or Site-to-Site VPN'
+                },
+                {
+                    'application': 'Service-to-Service Communication', 
+                    'recommendation': 'Azure Private Endpoints and Service Endpoints'
+                }
+            ])
+        
+        return recommendations[:12]  # Limit to 12 recommendations as shown in example
+    
+    def _get_azure_service_recommendation(self, application: str, connection) -> str:
+        """Get Azure service recommendation based on application name and connection details."""
+        app_lower = application.lower()
+        
+        # Database applications
+        if any(db in app_lower for db in ['oracle', 'mysql', 'postgres', 'sql', 'database', 'db']):
+            return 'Azure Database Service (SQL/MySQL/PostgreSQL)'
+        
+        # Web applications
+        if any(web in app_lower for web in ['apache', 'nginx', 'iis', 'tomcat', 'web', 'http']):
+            return 'Azure App Service or Azure Container Apps'
+        
+        # Monitoring and agents
+        if any(monitor in app_lower for monitor in ['agent', 'monitor', 'splunk', 'omsagent', 'qualys']):
+            return 'Azure Virtual Machine or Azure Container Apps'
+        
+        # File and storage applications
+        if any(storage in app_lower for storage in ['file', 'storage', 'backup', 'ftp']):
+            return 'Azure Files or Azure Blob Storage'
+        
+        # Default recommendation based on port
+        if hasattr(connection, 'destination_port'):
+            port = str(connection.destination_port)
+            if port in ['80', '443', '8080', '9000']:
+                return 'Azure App Service or Azure Container Apps'
+            elif port in ['1433', '3306', '5432', '1521']:
+                return 'Azure Database Service'
+            elif port in ['22', '3389']:
+                return 'Azure Virtual Machine with Bastion Host'
+        
+        return 'Azure Virtual Machine or Azure Container Apps'
+        """Extract compute service recommendations from network connections."""
+        recommendations = []
+        applications_seen = set()
+        
+        # Extract unique applications from network connections
+        for conn in network_connections:
+            apps_to_analyze = []
+            
+            if hasattr(conn, 'source_application') and conn.source_application and conn.source_application.strip():
+                apps_to_analyze.append(conn.source_application.strip())
+            
+            if hasattr(conn, 'destination_application') and conn.destination_application and conn.destination_application.strip():
+                apps_to_analyze.append(conn.destination_application.strip())
+            
+            for app in apps_to_analyze:
+                if app and app not in applications_seen and app != '-' and len(app) > 2:
+                    applications_seen.add(app)
+                    
+                    # Generate Azure service recommendation based on application type
+                    recommendation = self._get_azure_service_recommendation(app, conn)
+                    recommendations.append({
+                        'application': app,
+                        'recommendation': recommendation
+                    })
+        
+        # Add standard connectivity recommendations
+        if len(network_connections) > 50:  # If substantial network traffic
+            recommendations.extend([
+                {
+                    'application': 'Hybrid Connectivity',
+                    'recommendation': 'Azure ExpressRoute or Site-to-Site VPN'
+                },
+                {
+                    'application': 'Service-to-Service Communication', 
+                    'recommendation': 'Azure Private Endpoints and Service Endpoints'
+                }
+            ])
+        
+        return recommendations[:12]  # Limit to 12 recommendations as shown in example
+    
+    def _get_azure_service_recommendation(self, application: str, connection) -> str:
+        """Get Azure service recommendation based on application name and connection details."""
+        app_lower = application.lower()
+        
+        # Database applications
+        if any(db in app_lower for db in ['oracle', 'mysql', 'postgres', 'sql', 'database', 'db']):
+            return 'Azure Database Service (SQL/MySQL/PostgreSQL)'
+        
+        # Web applications
+        if any(web in app_lower for web in ['apache', 'nginx', 'iis', 'tomcat', 'web', 'http']):
+            return 'Azure App Service or Azure Container Apps'
+        
+        # Monitoring and agents
+        if any(monitor in app_lower for monitor in ['agent', 'monitor', 'splunk', 'omsagent', 'qualys']):
+            return 'Azure Virtual Machine or Azure Container Apps'
+        
+        # File and storage applications
+        if any(storage in app_lower for storage in ['file', 'storage', 'backup', 'ftp']):
+            return 'Azure Files or Azure Blob Storage'
+        
+        # Default recommendation based on port
+        if hasattr(connection, 'destination_port'):
+            port = str(connection.destination_port)
+            if port in ['80', '443', '8080', '9000']:
+                return 'Azure App Service or Azure Container Apps'
+            elif port in ['1433', '3306', '5432', '1521']:
+                return 'Azure Database Service'
+            elif port in ['22', '3389']:
+                return 'Azure Virtual Machine with Bastion Host'
+        
+        return 'Azure Virtual Machine or Azure Container Apps'
+    
+    def _generate_network_diagram_description(self, target_architecture: TargetArchitecture) -> str:
+        """Generate network diagram description."""
+        description = "**Target Network Architecture Overview**\n\n"
+        description += f"The proposed Azure network architecture is designed based on analysis of {len(target_architecture.network_connections)} identified network connections from the dependency analysis.\n\n"
+        
+        description += "**Key Components:**\n"
+        description += "1. **Virtual Network (VNet)**: Primary network container with multiple subnets for security isolation\n"
+        description += f"2. **Subnets**: {len(target_architecture.subnet_recommendations)} application-specific subnets based on traffic patterns\n"
+        description += f"3. **Network Security Groups**: {len(target_architecture.nsg_rules)} rules based on discovered ports and protocols\n"
+        description += f"4. **Load Balancers**: {len(target_architecture.load_balancer_config)} load balancing configurations for high availability\n"
+        description += "5. **Private Endpoints**: Service endpoints for secure Azure service connectivity\n"
+        description += "6. **Hybrid Connectivity**: ExpressRoute or VPN Gateway for on-premises integration\n\n"
+        
+        # Add specific network insights
+        if target_architecture.network_connections:
+            unique_ports = set()
+            unique_ips = set()
+            
+            for conn in target_architecture.network_connections:
+                if hasattr(conn, 'destination_port') and conn.destination_port:
+                    unique_ports.add(str(conn.destination_port))
+                if hasattr(conn, 'source_ip') and conn.source_ip:
+                    unique_ips.add(conn.source_ip)
+            
+            description += "**Network Traffic Insights:**\n"
+            description += f"• Discovered {len(unique_ports)} unique ports requiring firewall rules\n"
+            description += f"• Identified {len(unique_ips)} unique IP addresses for subnet planning\n"
+            description += f"• Analyzed {len(target_architecture.network_connections)} connection patterns for security and performance optimization\n"
+        
+        return description
+    
+    def _format_network_analysis_summary(self, assessment_data: AssessmentReportData) -> str:
+        """Format network analysis summary for AI context."""
+        if not hasattr(assessment_data, 'target_architecture') or not assessment_data.target_architecture:
+            return "No network traffic analysis available."
+        
+        try:
+            target_arch = assessment_data.target_architecture
+            
+            # Safely get network connections
+            network_connections = getattr(target_arch, 'network_connections', []) or []
+            summary = f"Network Connections Analyzed: {len(network_connections)}\n"
+            
+            # Unique ports discovered
+            ports = set()
+            applications = set()
+            source_ips = set()
+            dest_ips = set()
+            
+            for conn in network_connections:
+                # Safely access connection attributes
+                dest_port = getattr(conn, 'destination_port', None)
+                if dest_port:
+                    ports.add(str(dest_port))
+                    
+                src_app = getattr(conn, 'source_application', None)
+                if src_app:
+                    applications.add(src_app)
+                    
+                dest_app = getattr(conn, 'destination_application', None)
+                if dest_app:
+                    applications.add(dest_app)
+                    
+                src_ip = getattr(conn, 'source_ip', None)
+                if src_ip:
+                    source_ips.add(src_ip)
+                    
+                dest_ip = getattr(conn, 'destination_ip', None)
+                if dest_ip:
+                    dest_ips.add(dest_ip)
+            
+            summary += f"Unique Ports: {sorted(list(ports))}\n"
+            summary += f"Applications Discovered: {sorted(list(applications))}\n"
+            summary += f"Source IP Ranges: {len(source_ips)} unique IPs\n"
+            summary += f"Destination IP Ranges: {len(dest_ips)} unique IPs\n"
+            
+            # Safely get subnet recommendations
+            subnet_recs = getattr(target_arch, 'subnet_recommendations', []) or []
+            summary += f"Subnets Recommended: {len(subnet_recs)}\n"
+            
+            return summary
+            
+        except Exception as e:
+            print(f"Warning: Error formatting network analysis summary: {e}")
+            return "Network traffic analysis summary unavailable due to processing error."
+        summary += f"NSG Rules Generated: {len(target_arch.nsg_rules) if target_arch.nsg_rules else 0}"
+        
+        return summary
+    
     def generate_assessment_report(
         self,
         questions_answers: List[QuestionAnswer],
         azure_migrate_data: Any,
+        dependency_analysis: Any = None,
         project_name: str = "Azure Migration Project",
         template_path: Optional[str] = None,
         llm_client=None
     ) -> AssessmentReportData:
         """
-        Generate assessment report data from Q&A analysis and Azure Migrate data.
+        Generate comprehensive assessment report using transcript, Azure Migrate data, and dependency analysis.
         
         Args:
             questions_answers: List of question-answer pairs from transcript analysis
             azure_migrate_data: Azure Migrate report data
+            dependency_analysis: Azure Migrate dependency analysis data
             project_name: Name of the migration project
             template_path: Optional path to template file
             llm_client: LLM client for intelligent analysis
@@ -276,9 +931,9 @@ Generate the content:
         # Extract environment information for dynamic content generation
         assessment_data.environments = self._extract_environments(questions_answers)
         
-        # Process Q&A data to populate assessment sections
+        # Process Q&A data to populate assessment sections using comprehensive analysis
         assessment_data.security_considerations = self._extract_security_considerations(questions_answers)
-        assessment_data.network_requirements = self._extract_network_requirements(questions_answers)
+        assessment_data.network_requirements = self._extract_network_requirements_enhanced(questions_answers, dependency_analysis)
         assessment_data.identity_providers = self._extract_identity_providers(questions_answers)
         assessment_data.automation_details = self._extract_automation_details(questions_answers)
         assessment_data.customer_impact = self._extract_customer_impact(questions_answers)
@@ -287,8 +942,11 @@ Generate the content:
         
         # Process Azure Migrate data if available
         if azure_migrate_data:
-            assessment_data.architecture_heatmap = self._generate_architecture_heatmap(azure_migrate_data, questions_answers)
+            assessment_data.architecture_heatmap = self._generate_architecture_heatmap_enhanced(azure_migrate_data, questions_answers, dependency_analysis)
             assessment_data.application_allocation = self._generate_application_allocation(azure_migrate_data)
+        
+        # Generate target architecture recommendations based on network traffic analysis
+        assessment_data.target_architecture = self._generate_target_architecture(questions_answers, azure_migrate_data, dependency_analysis)
         
         # Generate supporting documentation list
         assessment_data.supporting_documents = self._generate_supporting_documents()
@@ -572,6 +1230,10 @@ Ensure the justification explains why the other approaches were not selected."""
             page_num += 1
             dots = "." * max(5, 70 - len(f"5.{i+1}\t{env} Proposed Architecture"))
             toc_lines.append(f"5.{i+1}\t{env} Proposed Architecture" + dots + f"{page_num}")
+        
+        # Add Low Level Design section
+        page_num += 1
+        toc_lines.append(f"5.4\tLow Level Design - Network Traffic Analysis" + "." * 25 + f"{page_num}")
         
         # Continue with static sections
         page_num += 1
@@ -1882,49 +2544,63 @@ Focus on real network patterns, integrations, and connectivity requirements ment
         return f"Network flow analysis for {env_name} environment requires detailed assessment of {assessment_data.application_name} connectivity requirements based on the application architecture."
 
     def _generate_proposed_architecture_content(self, env_name: str, assessment_data: AssessmentReportData) -> str:
-        """Generate proposed Azure architecture content for specific environment using AI analysis."""
+        """Generate proposed Azure architecture content for specific environment using AI analysis and network traffic data."""
+        
+        # Start with target architecture if available
+        content = ""
+        if hasattr(assessment_data, 'target_architecture') and assessment_data.target_architecture:
+            content += self._format_target_architecture_content(env_name, assessment_data.target_architecture)
+            content += "\n\n"
         
         # Prepare Q&A context for AI analysis
         qa_text = "\n".join([f"Q: {qa.question}\nA: {qa.answer}" for qa in assessment_data.questions_answers 
                            if qa.is_answered and qa.answer != "Not addressed in transcript"])
         
         if not qa_text.strip():
+            if content:
+                return content + f"Additional architecture analysis for {env_name} environment requires detailed review of {assessment_data.application_name} specific requirements."
             return f"Proposed Azure architecture for {env_name} environment requires detailed analysis of {assessment_data.application_name} requirements."
         
+        # Enhanced architecture prompt that incorporates network traffic analysis
         architecture_prompt = f"""Analyze this application assessment and generate proposed Azure architecture content for the {env_name} environment.
 
 APPLICATION: {assessment_data.application_name}
 ENVIRONMENT: {env_name}
 
 TRANSCRIPT DATA:
-{qa_text[:2500]}
+{qa_text[:2000]}
 
-Based on the conversation, generate proposed Azure architecture that:
+NETWORK TRAFFIC ANALYSIS:
+{self._format_network_analysis_summary(assessment_data)}
+
+Based on the conversation and network traffic analysis, generate proposed Azure architecture that:
 1. Maps current technologies mentioned to appropriate Azure services
 2. Addresses specific requirements and constraints discussed
-3. Considers the technology stack and frameworks identified
-4. Proposes Azure services that match the discussed architecture
-5. Addresses scalability, security, and operational needs mentioned
+3. Incorporates network traffic patterns for optimal service placement
+4. Proposes Azure services that match the discovered architecture patterns
+5. Addresses scalability, security, and operational needs based on actual traffic
 
-Generate detailed Azure architecture recommendations (300-500 words) with specific Azure services based on the actual application requirements discussed.
+Generate detailed Azure architecture recommendations (300-500 words) with specific Azure services based on the actual application requirements and network traffic patterns.
 
 Structure the response with sections like:
-- Compute Resources (based on application type discussed)
-- Database (based on database technologies mentioned)  
-- Networking (based on connectivity requirements)
-- Security (based on security concerns mentioned)
-- Monitoring (based on operational needs)
+- Compute Resources (based on discovered applications and Azure Migrate data)
+- Database (based on database technologies and port analysis)  
+- Networking (based on traffic patterns and connectivity analysis)
+- Security (based on discovered ports and security requirements)
+- Monitoring (based on operational needs and traffic monitoring)
 
-Use actual Azure service names and reference real requirements from the conversation."""
+Use actual Azure service names and reference real requirements from the conversation and network analysis."""
 
         # Get AI analysis
-        result = self._llm_analyze(architecture_prompt, 
+        ai_result = self._llm_analyze(architecture_prompt, 
             f"Proposed Azure architecture for {env_name} environment requires analysis of {assessment_data.application_name} specific requirements and technology stack.")
         
-        if isinstance(result, str) and len(result) > 100:
-            return result
+        if isinstance(ai_result, str) and len(ai_result) > 100:
+            content += ai_result
+        else:
+            content += f"Proposed Azure architecture for {env_name} environment requires detailed analysis of {assessment_data.application_name} requirements and current technology stack to recommend appropriate Azure services."
         
-        return f"Proposed Azure architecture for {env_name} environment requires detailed analysis of {assessment_data.application_name} requirements and current technology stack to recommend appropriate Azure services."
+        return content
 
     def _extract_security_considerations(self, questions_answers: List[QuestionAnswer]) -> List[Dict[str, str]]:
         """Extract security-related information from Q&A data using comprehensive AI analysis following MigrationPlanGenerator pattern."""
@@ -2290,6 +2966,119 @@ If specific network requirements are not clearly mentioned, make intelligent inf
             "performance_context": performance_context[:3],  # Top 3 performance-related Q&As
             "integration_context": integration_context[:3]  # Top 3 integration-related Q&As
         }
+    
+    def _extract_network_requirements_enhanced(self, questions_answers: List[QuestionAnswer], dependency_analysis: Any = None) -> List[Dict[str, str]]:
+        """Extract network-related requirements using transcript Q&A and dependency analysis data."""
+        
+        # Start with transcript-based analysis
+        network_requirements = self._extract_network_requirements(questions_answers)
+        
+        # Enhanced analysis with dependency data if available
+        if dependency_analysis:
+            dependency_insights = self._analyze_dependency_network_requirements(dependency_analysis)
+            
+            # Merge dependency insights with transcript analysis
+            for insight in dependency_insights:
+                # Check if similar requirement exists from transcript
+                existing_requirement = None
+                for req in network_requirements:
+                    if (req.get('category', '').lower() == insight.get('category', '').lower() or
+                        any(keyword in req.get('requirement', '').lower() 
+                            for keyword in insight.get('requirement', '').lower().split()[:3])):
+                        existing_requirement = req
+                        break
+                
+                if existing_requirement:
+                    # Enhance existing requirement with dependency data
+                    existing_requirement['requirement'] = f"{existing_requirement['requirement']} {insight.get('dependency_detail', '')}"
+                    existing_requirement['source'] = f"{existing_requirement.get('source', 'Transcript analysis')} + Dependency analysis"
+                else:
+                    # Add new requirement from dependency analysis
+                    network_requirements.append({
+                        'category': insight.get('category', 'Network Connectivity'),
+                        'requirement': insight.get('requirement', ''),
+                        'source': 'Dependency analysis',
+                        'priority': insight.get('priority', 'Medium')
+                    })
+        
+        return network_requirements
+    
+    def _analyze_dependency_network_requirements(self, dependency_analysis: Any) -> List[Dict[str, str]]:
+        """Analyze dependency data to extract network requirements."""
+        requirements = []
+        
+        try:
+            # Analyze network segments for subnet/VLAN requirements
+            if hasattr(dependency_analysis, 'network_segments') and dependency_analysis.network_segments:
+                subnet_count = len(dependency_analysis.network_segments)
+                if subnet_count > 1:
+                    requirements.append({
+                        'category': 'Network Segmentation',
+                        'requirement': f'Multi-subnet architecture required with {subnet_count} network segments for proper isolation',
+                        'dependency_detail': f'Based on {subnet_count} identified network segments in dependency analysis',
+                        'priority': 'High'
+                    })
+            
+            # Analyze connections for port and protocol requirements
+            if hasattr(dependency_analysis, 'connections') and dependency_analysis.connections:
+                protocols = set()
+                ports = set()
+                external_connections = 0
+                
+                for conn in dependency_analysis.connections:
+                    if hasattr(conn, 'protocol') and conn.protocol:
+                        protocols.add(conn.protocol.upper())
+                    if hasattr(conn, 'port') and conn.port:
+                        ports.add(str(conn.port))
+                    if hasattr(conn, 'source_server') and hasattr(conn, 'target_server'):
+                        if 'external' in (conn.source_server + conn.target_server).lower():
+                            external_connections += 1
+                
+                if protocols:
+                    requirements.append({
+                        'category': 'Protocol Support',
+                        'requirement': f'Support required for protocols: {", ".join(sorted(protocols))}',
+                        'dependency_detail': f'Identified from {len(dependency_analysis.connections)} dependency connections',
+                        'priority': 'High'
+                    })
+                
+                if ports:
+                    port_list = sorted([int(p) for p in ports if p.isdigit()])[:10]  # Top 10 ports
+                    requirements.append({
+                        'category': 'Port Configuration',
+                        'requirement': f'Network Security Group rules needed for ports: {", ".join(map(str, port_list))}',
+                        'dependency_detail': f'Based on analysis of application dependencies',
+                        'priority': 'Medium'
+                    })
+                
+                if external_connections > 0:
+                    requirements.append({
+                        'category': 'External Connectivity',
+                        'requirement': f'External connectivity required for {external_connections} identified external dependencies',
+                        'dependency_detail': 'May require Azure Firewall or Application Gateway configuration',
+                        'priority': 'High'
+                    })
+            
+            # Analyze external dependencies
+            if hasattr(dependency_analysis, 'external_dependencies') and dependency_analysis.external_dependencies:
+                ext_count = len(dependency_analysis.external_dependencies)
+                requirements.append({
+                    'category': 'Internet Connectivity',
+                    'requirement': f'Internet access required for {ext_count} external services',
+                    'dependency_detail': 'Identified external dependencies requiring outbound connectivity',
+                    'priority': 'Medium'
+                })
+        
+        except Exception as e:
+            # Fallback in case of dependency analysis parsing issues
+            requirements.append({
+                'category': 'Network Analysis',
+                'requirement': 'Standard Azure networking configuration recommended',
+                'dependency_detail': f'Dependency analysis available but could not be fully parsed: {str(e)}',
+                'priority': 'Medium'
+            })
+        
+        return requirements
     
     def _extract_identity_providers(self, questions_answers: List[QuestionAnswer]) -> List[Dict[str, str]]:
         """Extract identity and authentication information using comprehensive AI analysis following MigrationPlanGenerator pattern."""
@@ -2771,6 +3560,112 @@ Focus on real observability requirements mentioned, not generic recommendations.
             heatmap[4]['notes'] = 'Standard integration approach'
         
         return heatmap
+    
+    def _generate_architecture_heatmap_enhanced(self, azure_migrate_data: Any, questions_answers: List[QuestionAnswer], dependency_analysis: Any = None) -> List[Dict[str, str]]:
+        """Generate enhanced architecture complexity heatmap using transcript Q&A, Azure Migrate data, and dependency analysis."""
+        
+        # Start with base analysis from transcript and Azure Migrate data
+        heatmap = self._generate_architecture_heatmap(azure_migrate_data, questions_answers)
+        
+        # Enhance with dependency analysis if available
+        if dependency_analysis:
+            dependency_insights = self._analyze_dependency_complexity(dependency_analysis)
+            
+            # Update heatmap based on dependency analysis
+            for insight in dependency_insights:
+                # Find corresponding heatmap area
+                matching_area = None
+                for item in heatmap:
+                    if insight['area'].lower() in item['area'].lower() or item['area'].lower() in insight['area'].lower():
+                        matching_area = item
+                        break
+                
+                if matching_area:
+                    # Combine rankings (take higher complexity)
+                    current_rank = matching_area['ranking']
+                    new_rank = insight['ranking']
+                    
+                    rank_values = {'Low': 1, 'Medium': 2, 'High': 3}
+                    if rank_values.get(new_rank, 1) > rank_values.get(current_rank, 1):
+                        matching_area['ranking'] = new_rank
+                        matching_area['notes'] = f"{matching_area['notes']} + {insight['notes']}"
+                else:
+                    # Add new complexity area from dependency analysis
+                    heatmap.append(insight)
+        
+        return heatmap
+    
+    def _analyze_dependency_complexity(self, dependency_analysis: Any) -> List[Dict[str, str]]:
+        """Analyze dependency data to determine architecture complexity factors."""
+        complexity_insights = []
+        
+        try:
+            # Analyze network complexity
+            if hasattr(dependency_analysis, 'network_segments') and dependency_analysis.network_segments:
+                segment_count = len(dependency_analysis.network_segments)
+                if segment_count > 3:
+                    complexity_insights.append({
+                        'area': 'Network Segmentation',
+                        'ranking': 'High',
+                        'notes': f'Complex network with {segment_count} segments requiring careful Azure VNET planning'
+                    })
+                elif segment_count > 1:
+                    complexity_insights.append({
+                        'area': 'Network Segmentation', 
+                        'ranking': 'Medium',
+                        'notes': f'Multi-segment network ({segment_count} segments) requiring subnet planning'
+                    })
+            
+            # Analyze connection complexity
+            if hasattr(dependency_analysis, 'connections') and dependency_analysis.connections:
+                connection_count = len(dependency_analysis.connections)
+                unique_protocols = set()
+                unique_ports = set()
+                
+                for conn in dependency_analysis.connections:
+                    if hasattr(conn, 'protocol') and conn.protocol:
+                        unique_protocols.add(conn.protocol.upper())
+                    if hasattr(conn, 'port') and conn.port:
+                        unique_ports.add(conn.port)
+                
+                if connection_count > 50 or len(unique_protocols) > 5:
+                    complexity_insights.append({
+                        'area': 'Dependency Complexity',
+                        'ranking': 'High', 
+                        'notes': f'High dependency complexity: {connection_count} connections, {len(unique_protocols)} protocols'
+                    })
+                elif connection_count > 20 or len(unique_protocols) > 2:
+                    complexity_insights.append({
+                        'area': 'Dependency Complexity',
+                        'ranking': 'Medium',
+                        'notes': f'Moderate dependencies: {connection_count} connections, {len(unique_protocols)} protocols'
+                    })
+            
+            # Analyze external dependency complexity
+            if hasattr(dependency_analysis, 'external_dependencies') and dependency_analysis.external_dependencies:
+                ext_count = len(dependency_analysis.external_dependencies)
+                if ext_count > 10:
+                    complexity_insights.append({
+                        'area': 'External Integration',
+                        'ranking': 'High',
+                        'notes': f'High external dependency complexity: {ext_count} external systems'
+                    })
+                elif ext_count > 3:
+                    complexity_insights.append({
+                        'area': 'External Integration',
+                        'ranking': 'Medium', 
+                        'notes': f'Moderate external dependencies: {ext_count} external systems'
+                    })
+        
+        except Exception as e:
+            # Fallback in case of parsing issues
+            complexity_insights.append({
+                'area': 'Dependency Analysis',
+                'ranking': 'Medium',
+                'notes': f'Dependency data available but requires manual review: {str(e)}'
+            })
+        
+        return complexity_insights
     
     def _generate_application_allocation(self, azure_migrate_data: Any) -> Dict[str, Any]:
         """Generate application allocation and scheduling information."""
@@ -3382,6 +4277,36 @@ Focus on real observability requirements mentioned, not generic recommendations.
             
             doc.add_paragraph(f'Figure: {env} Proposed Architecture Diagram')
             doc.add_paragraph("")  # Add spacing
+        
+        # 5.4 Low Level Design - Network Traffic Analysis
+        doc.add_heading('5.4	Low Level Design - Network Traffic Analysis', 1)
+        doc.add_paragraph('Based on the comprehensive analysis of network dependency data, the following low-level design recommendations provide detailed insights into the proposed Azure architecture.')
+        
+        # Add detailed network analysis content
+        print(f"DEBUG: Checking target_architecture - hasattr: {hasattr(assessment_data, 'target_architecture')}")
+        if hasattr(assessment_data, 'target_architecture'):
+            print(f"DEBUG: target_architecture value: {assessment_data.target_architecture}")
+            print(f"DEBUG: target_architecture type: {type(assessment_data.target_architecture)}")
+        
+        if hasattr(assessment_data, 'target_architecture') and assessment_data.target_architecture:
+            try:
+                print("DEBUG: About to generate network analysis content...")
+                network_analysis_content = self._generate_comprehensive_network_analysis(assessment_data.target_architecture)
+                print(f"DEBUG: Generated content length: {len(network_analysis_content) if network_analysis_content else 0}")
+                print(f"DEBUG: Content preview: {network_analysis_content[:200] if network_analysis_content else 'None'}")
+                self._add_formatted_paragraph(doc, network_analysis_content)
+                print("DEBUG: Successfully added network analysis content to document")
+            except Exception as e:
+                print(f"Warning: Error generating network analysis content: {e}")
+                print(f"DEBUG: Exception type: {type(e)}")
+                import traceback
+                traceback.print_exc()
+                doc.add_paragraph("Network traffic analysis encountered an error. Low-level design will be based on application requirements and Azure best practices.")
+        else:
+            print("DEBUG: No target_architecture found - adding fallback message")
+            doc.add_paragraph("Network traffic analysis data is not available. Low-level design will be based on application requirements and Azure best practices.")
+        
+        doc.add_paragraph("")  # Add spacing
         
         # 6. Architecture Heatmap
         doc.add_heading('6	Architecture Heatmap', 0)
@@ -5033,3 +5958,564 @@ The following matrix outlines the key decisions made during the assessment:
             content += f"\n• {point}"
         
         return content
+    
+    def _generate_target_architecture(self, questions_answers: List[QuestionAnswer], azure_migrate_data: Any, dependency_analysis: Any) -> TargetArchitecture:
+        """Generate target architecture recommendations based on network traffic analysis and dependency data."""
+        
+        # Get network connections from dependency analysis
+        network_connections = []
+        if dependency_analysis and hasattr(dependency_analysis, 'connections'):
+            network_connections = dependency_analysis.connections
+        
+        # Create target architecture object
+        target_architecture = TargetArchitecture(
+            network_connections=network_connections,
+            subnet_recommendations=[],
+            nsg_rules=[],
+            load_balancer_config=[],
+            recommendations=[]
+        )
+        
+        try:
+            if network_connections:
+                # Generate subnet recommendations based on IP patterns
+                target_architecture.subnet_recommendations = self._create_subnet_recommendations(network_connections)
+                
+                # Generate NSG rules based on discovered ports
+                target_architecture.nsg_rules = self._create_nsg_rules(network_connections)
+                
+                # Generate load balancer recommendations based on multi-server patterns
+                target_architecture.load_balancer_config = self._create_load_balancer_config(network_connections)
+                
+                # Add general recommendations
+                target_architecture.recommendations = self._create_architecture_recommendations(network_connections, azure_migrate_data)
+        
+        except Exception as e:
+            print(f"Warning: Error generating target architecture: {e}")
+            # Add fallback recommendations
+            target_architecture.recommendations = ["Target architecture requires detailed network analysis"]
+        
+        return target_architecture
+    
+    def _create_subnet_recommendations(self, network_connections: List) -> List[SubnetRecommendation]:
+        """Create subnet recommendations based on network connections."""
+        subnets = []
+        
+        # Analyze IP patterns
+        ip_networks = {}
+        for conn in network_connections:
+            if hasattr(conn, 'source_ip') and conn.source_ip:
+                network = '.'.join(conn.source_ip.split('.')[:3])
+                if network not in ip_networks:
+                    ip_networks[network] = set()
+                ip_networks[network].add(conn.source_ip)
+        
+        # Create subnet recommendations
+        for i, (network, ips) in enumerate(ip_networks.items(), 1):
+            subnets.append(SubnetRecommendation(
+                name=f"app-subnet-{i}",
+                address_range=f"{network}.0/24",
+                purpose=f"Application tier - hosts {len(ips)} discovered services",
+                service_endpoints=["Microsoft.Storage", "Microsoft.KeyVault"]
+            ))
+        
+        # Add standard subnets if none discovered
+        if not subnets:
+            subnets.append(SubnetRecommendation(
+                name="app-subnet-1",
+                address_range="10.0.1.0/24",
+                purpose="Application tier subnet",
+                service_endpoints=["Microsoft.Storage", "Microsoft.KeyVault"]
+            ))
+        
+        return subnets
+    
+    def _create_nsg_rules(self, network_connections: List) -> List[NSGRule]:
+        """Create NSG rules based on discovered network traffic."""
+        rules = []
+        ports_discovered = set()
+        
+        # Extract unique ports from connections
+        for conn in network_connections:
+            if hasattr(conn, 'destination_port') and conn.destination_port:
+                try:
+                    port = str(conn.destination_port)
+                    if port.isdigit():
+                        ports_discovered.add(port)
+                except:
+                    pass
+        
+        # Create rules for discovered ports
+        priority = 1000
+        for port in sorted(ports_discovered):
+            rule_name = f"Allow_Port_{port}"
+            description = self._get_port_description(port)
+            
+            rules.append(NSGRule(
+                name=rule_name,
+                direction="inbound",
+                protocol="TCP",
+                source_address_prefix="10.0.0.0/16",
+                destination_address_prefix="*",
+                destination_port=port,
+                priority=priority,
+                description=description
+            ))
+            priority += 10
+        
+        # Add standard rules if none discovered
+        if not rules:
+            rules.append(NSGRule(
+                name="Allow_HTTP",
+                direction="inbound",
+                protocol="TCP",
+                source_address_prefix="*",
+                destination_address_prefix="*",
+                destination_port="80",
+                priority=1000,
+                description="Allow HTTP traffic"
+            ))
+        
+        return rules
+    
+    def _create_load_balancer_config(self, network_connections: List) -> List[LoadBalancerConfig]:
+        """Create load balancer configuration based on network patterns."""
+        load_balancers = []
+        
+        # Analyze for load balancer patterns (multiple servers on same ports)
+        port_servers = {}
+        for conn in network_connections:
+            if hasattr(conn, 'destination_port') and hasattr(conn, 'destination_ip'):
+                port = str(conn.destination_port)
+                if port not in port_servers:
+                    port_servers[port] = set()
+                port_servers[port].add(conn.destination_ip)
+        
+        # Create load balancers for ports with multiple servers
+        for port, servers in port_servers.items():
+            if len(servers) > 1:
+                load_balancers.append(LoadBalancerConfig(
+                    name=f"lb-app-{port}",
+                    type="internal",
+                    frontend_ip_config="Dynamic",
+                    backend_pools=[f"backend-pool-{port}"],
+                    load_balancing_rules=[LoadBalancingRule(
+                        frontend_port=port,
+                        backend_port=port,
+                        protocol="TCP"
+                    )]
+                ))
+        
+        return load_balancers
+    
+    def _create_architecture_recommendations(self, network_connections: List, azure_migrate_data: Any) -> List[str]:
+        """Create general architecture recommendations."""
+        recommendations = []
+        
+        connection_count = len(network_connections)
+        recommendations.append(f"Analyzed {connection_count} network connections for architecture planning")
+        
+        # Port analysis
+        ports = set()
+        for conn in network_connections:
+            if hasattr(conn, 'destination_port') and conn.destination_port:
+                ports.add(str(conn.destination_port))
+        
+        if ports:
+            recommendations.append(f"Configure NSG rules for {len(ports)} discovered ports: {', '.join(sorted(ports)[:5])}")
+        
+        # IP analysis
+        unique_ips = set()
+        for conn in network_connections:
+            if hasattr(conn, 'source_ip') and conn.source_ip:
+                unique_ips.add(conn.source_ip)
+            if hasattr(conn, 'destination_ip') and conn.destination_ip:
+                unique_ips.add(conn.destination_ip)
+        
+        if unique_ips:
+            recommendations.append(f"Plan VNet addressing for {len(unique_ips)} discovered IP addresses")
+        
+        # Add Azure Migrate insights
+        if azure_migrate_data and hasattr(azure_migrate_data, 'servers'):
+            recommendations.append(f"Consider Azure Migrate recommendations for {len(azure_migrate_data.servers)} servers")
+        
+        return recommendations
+    
+    def _get_port_description(self, port: str) -> str:
+        """Get description for common ports."""
+        port_descriptions = {
+            "80": "HTTP web traffic",
+            "443": "HTTPS secure web traffic",
+            "3389": "RDP remote desktop",
+            "22": "SSH secure shell",
+            "1433": "SQL Server database",
+            "3306": "MySQL database",
+            "5432": "PostgreSQL database",
+            "6379": "Redis cache",
+            "8080": "HTTP alternative port",
+            "9000": "Application server"
+        }
+        return port_descriptions.get(port, f"Application traffic on port {port}")
+    
+    def _generate_subnet_recommendations(self, source_ips: set, destination_ips: set, dependency_analysis: Any) -> List[Dict[str, str]]:
+        """Generate subnet recommendations based on IP traffic analysis."""
+        recommendations = []
+        
+        # Analyze IP patterns to suggest subnet structure
+        all_ips = source_ips.union(destination_ips)
+        ip_networks = {}
+        
+        for ip in all_ips:
+            if ip and '.' in ip:
+                try:
+                    # Extract network prefix (first 3 octets)
+                    network_prefix = '.'.join(ip.split('.')[:3])
+                    if network_prefix not in ip_networks:
+                        ip_networks[network_prefix] = []
+                    ip_networks[network_prefix].append(ip)
+                except:
+                    continue
+        
+        # Generate subnet recommendations
+        for i, (network, ips) in enumerate(ip_networks.items(), 1):
+            recommendations.append({
+                'subnet_name': f'app-subnet-{i}',
+                'address_space': f'{network}.0/24',
+                'purpose': f'Application tier - hosts {len(ips)} identified services',
+                'security_requirements': 'NSG required for traffic filtering'
+            })
+        
+        # Add standard Azure subnets
+        recommendations.extend([
+            {
+                'subnet_name': 'gateway-subnet',
+                'address_space': 'To be determined based on VNet planning',
+                'purpose': 'VPN Gateway for hybrid connectivity',
+                'security_requirements': 'Gateway-specific NSG rules'
+            },
+            {
+                'subnet_name': 'bastion-subnet',
+                'address_space': 'To be determined based on VNet planning', 
+                'purpose': 'Azure Bastion for secure management access',
+                'security_requirements': 'Bastion-specific NSG rules'
+            }
+        ])
+        
+        return recommendations
+    
+    def _generate_nsg_rules(self, ports_used: set, dependency_analysis: Any) -> List[Dict[str, str]]:
+        """Generate Network Security Group rules based on identified traffic patterns."""
+        nsg_rules = []
+        
+        # Create rules for discovered ports
+        for port in sorted(ports_used):
+            if port and port.isdigit():
+                port_int = int(port)
+                service_name = self._identify_service_by_port(port_int)
+                
+                nsg_rules.append({
+                    'rule_name': f'Allow-{service_name}-{port}',
+                    'direction': 'Inbound',
+                    'priority': str(1000 + len(nsg_rules)),
+                    'source': 'Application subnet',
+                    'destination': 'Application subnet',
+                    'port': port,
+                    'protocol': 'TCP',
+                    'action': 'Allow',
+                    'description': f'Allow {service_name} traffic on port {port}'
+                })
+        
+        # Add standard security rules
+        nsg_rules.extend([
+            {
+                'rule_name': 'Deny-All-Inbound',
+                'direction': 'Inbound',
+                'priority': '4096',
+                'source': 'Any',
+                'destination': 'Any',
+                'port': '*',
+                'protocol': '*',
+                'action': 'Deny',
+                'description': 'Deny all other inbound traffic'
+            },
+            {
+                'rule_name': 'Allow-HTTPS-Internet',
+                'direction': 'Inbound',
+                'priority': '100',
+                'source': 'Internet',
+                'destination': 'Any',
+                'port': '443',
+                'protocol': 'TCP',
+                'action': 'Allow',
+                'description': 'Allow HTTPS from Internet'
+            }
+        ])
+        
+        return nsg_rules
+    
+    def _identify_service_by_port(self, port: int) -> str:
+        """Identify service type by port number."""
+        common_ports = {
+            80: 'HTTP',
+            443: 'HTTPS',
+            22: 'SSH',
+            3389: 'RDP',
+            1433: 'SQL-Server',
+            3306: 'MySQL',
+            5432: 'PostgreSQL',
+            1521: 'Oracle',
+            25: 'SMTP',
+            587: 'SMTP-Submission',
+            110: 'POP3',
+            143: 'IMAP',
+            993: 'IMAPS',
+            995: 'POP3S',
+            53: 'DNS',
+            123: 'NTP',
+            161: 'SNMP',
+            389: 'LDAP',
+            636: 'LDAPS',
+            8080: 'HTTP-Alt',
+            8443: 'HTTPS-Alt'
+        }
+        
+        return common_ports.get(port, f'Port-{port}')
+    
+    def _generate_load_balancer_recommendations(self, dependency_analysis: Any) -> List[Dict[str, str]]:
+        """Generate load balancer recommendations based on traffic patterns."""
+        recommendations = []
+        
+        # Analyze traffic to determine if load balancing is needed
+        if hasattr(dependency_analysis, 'connections') and dependency_analysis.connections:
+            # Count connections to each destination to identify high-traffic services
+            destination_traffic = {}
+            for conn in dependency_analysis.connections:
+                if hasattr(conn, 'destination_ip') and conn.destination_ip:
+                    dest = conn.destination_ip
+                    destination_traffic[dest] = destination_traffic.get(dest, 0) + 1
+            
+            # Recommend load balancing for high-traffic destinations
+            for dest, count in destination_traffic.items():
+                if count > 5:  # Threshold for load balancing consideration
+                    recommendations.append({
+                        'type': 'Azure Application Gateway',
+                        'target': dest,
+                        'reason': f'High traffic volume ({count} connections identified)',
+                        'configuration': 'Web Application Firewall enabled, SSL termination'
+                    })
+        
+        # Always recommend standard load balancing patterns
+        recommendations.extend([
+            {
+                'type': 'Azure Load Balancer (Standard)',
+                'target': 'Application tier',
+                'reason': 'High availability and scalability',
+                'configuration': 'Internal load balancer for backend services'
+            },
+            {
+                'type': 'Azure Application Gateway',
+                'target': 'Web tier',
+                'reason': 'Layer 7 load balancing and WAF protection',
+                'configuration': 'Public-facing with SSL/TLS termination'
+            }
+        ])
+        
+        return recommendations
+    
+    def _generate_compute_recommendations(self, applications: set, dependency_analysis: Any, azure_migrate_data: Any) -> List[Dict[str, str]]:
+        """Generate compute service recommendations based on identified applications and traffic."""
+        recommendations = []
+        
+        # Analyze applications for compute recommendations
+        for app in applications:
+            if app and app.lower() not in ['system', 'unknown', 'n/a']:
+                recommendations.append({
+                    'application': app,
+                    'recommended_service': self._recommend_azure_service(app),
+                    'justification': f'Based on application type and traffic patterns',
+                    'scaling_approach': 'Auto-scaling based on demand'
+                })
+        
+        # Add Azure Migrate recommendations if available
+        if azure_migrate_data and hasattr(azure_migrate_data, 'servers'):
+            for server in azure_migrate_data.servers[:5]:  # Limit to first 5 servers
+                recommendations.append({
+                    'application': f'{server.server_name} ({server.server_type})',
+                    'recommended_service': f'Azure VM {getattr(server, "azure_vm_size", "Standard_D2s_v3")}',
+                    'justification': f'Based on Azure Migrate assessment - {getattr(server, "readiness", "Ready")}',
+                    'scaling_approach': 'VM Scale Sets for horizontal scaling'
+                })
+        
+        return recommendations
+    
+    def _recommend_azure_service(self, application: str) -> str:
+        """Recommend appropriate Azure service based on application type."""
+        app_lower = application.lower()
+        
+        if any(keyword in app_lower for keyword in ['web', 'http', 'iis', 'apache', 'nginx']):
+            return 'Azure App Service or Azure Container Apps'
+        elif any(keyword in app_lower for keyword in ['database', 'sql', 'mysql', 'postgres', 'oracle']):
+            return 'Azure Database Service (PaaS) or SQL Server on VM'
+        elif any(keyword in app_lower for keyword in ['cache', 'redis', 'memcache']):
+            return 'Azure Cache for Redis'
+        elif any(keyword in app_lower for keyword in ['file', 'share', 'storage']):
+            return 'Azure Files or Azure Blob Storage'
+        else:
+            return 'Azure Virtual Machine or Azure Container Apps'
+    
+    def _generate_integration_recommendations(self, dependency_analysis: Any) -> List[Dict[str, str]]:
+        """Generate integration recommendations based on discovered connections."""
+        integrations = []
+        
+        if hasattr(dependency_analysis, 'connections') and dependency_analysis.connections:
+            # Analyze external connections
+            external_connections = []
+            internal_connections = []
+            
+            for conn in dependency_analysis.connections:
+                if hasattr(conn, 'source_ip') and hasattr(conn, 'destination_ip'):
+                    # Simple heuristic: different network prefixes suggest external connectivity
+                    source_net = '.'.join(conn.source_ip.split('.')[:3]) if conn.source_ip else ''
+                    dest_net = '.'.join(conn.destination_ip.split('.')[:3]) if conn.destination_ip else ''
+                    
+                    if source_net != dest_net:
+                        external_connections.append(conn)
+                    else:
+                        internal_connections.append(conn)
+            
+            # Recommend integration patterns
+            if external_connections:
+                integrations.append({
+                    'type': 'Hybrid Connectivity',
+                    'requirement': f'{len(external_connections)} external connections identified',
+                    'recommendation': 'Azure ExpressRoute or Site-to-Site VPN',
+                    'implementation': 'Virtual Network Gateway with appropriate bandwidth'
+                })
+            
+            if internal_connections:
+                integrations.append({
+                    'type': 'Service-to-Service Communication',
+                    'requirement': f'{len(internal_connections)} internal connections identified',
+                    'recommendation': 'Azure Private Endpoints and Service Endpoints',
+                    'implementation': 'Private networking for secure service communication'
+                })
+        
+        return integrations
+    
+    def _extract_business_requirements_for_architecture(self, questions_answers: List[QuestionAnswer]) -> Dict[str, Any]:
+        """Extract business requirements that impact architecture decisions."""
+        
+        requirements = {
+            'scalability_considerations': [],
+            'cost_optimization': [],
+            'security_requirements': []
+        }
+        
+        for qa in questions_answers:
+            if qa.is_answered and qa.answer != "Not addressed in transcript":
+                question_lower = qa.question.lower()
+                answer_lower = qa.answer.lower()
+                
+                # Scalability requirements
+                if any(keyword in question_lower for keyword in ['scale', 'performance', 'user', 'load']):
+                    requirements['scalability_considerations'].append({
+                        'requirement': qa.question,
+                        'consideration': qa.answer,
+                        'architecture_impact': 'Consider auto-scaling and load balancing'
+                    })
+                
+                # Cost requirements
+                if any(keyword in question_lower for keyword in ['cost', 'budget', 'price', 'expense']):
+                    requirements['cost_optimization'].append({
+                        'requirement': qa.question,
+                        'consideration': qa.answer,
+                        'architecture_impact': 'Optimize for cost-effectiveness'
+                    })
+                
+                # Security requirements
+                if any(keyword in question_lower for keyword in ['security', 'compliance', 'data protection', 'encryption']):
+                    requirements['security_requirements'].append({
+                        'requirement': qa.question,
+                        'consideration': qa.answer,
+                        'architecture_impact': 'Implement zero-trust security model'
+                    })
+        
+        return requirements
+    
+    def _format_azure_migrate_recommendations(self, azure_migrate_data: Any) -> Dict[str, Any]:
+        """Format Azure Migrate recommendations for target architecture."""
+        
+        recommendations = {
+            'servers_assessed': 0,
+            'ready_for_migration': 0,
+            'recommended_vm_sizes': [],
+            'estimated_monthly_cost': 0
+        }
+        
+        if hasattr(azure_migrate_data, 'servers'):
+            recommendations['servers_assessed'] = len(azure_migrate_data.servers)
+            
+            for server in azure_migrate_data.servers:
+                if hasattr(server, 'readiness') and 'ready' in str(server.readiness).lower():
+                    recommendations['ready_for_migration'] += 1
+                
+                if hasattr(server, 'azure_vm_size'):
+                    recommendations['recommended_vm_sizes'].append({
+                        'server': server.server_name,
+                        'vm_size': server.azure_vm_size,
+                        'current_specs': f'{getattr(server, "cpu_cores", "Unknown")} cores, {getattr(server, "memory_gb", "Unknown")} GB RAM'
+                    })
+                
+                if hasattr(server, 'estimated_cost'):
+                    try:
+                        cost = float(str(server.estimated_cost).replace('$', '').replace(',', ''))
+                        recommendations['estimated_monthly_cost'] += cost
+                    except:
+                        pass
+        
+        return recommendations
+    
+    def _generate_fallback_architecture(self) -> Dict[str, Any]:
+        """Generate fallback architecture when dependency analysis is not available."""
+        
+        return {
+            'compute_recommendations': [
+                {
+                    'application': 'Web Application',
+                    'recommended_service': 'Azure App Service',
+                    'justification': 'Standard recommendation for web applications',
+                    'scaling_approach': 'Built-in auto-scaling'
+                }
+            ],
+            'network_architecture': {
+                'subnet_recommendations': [
+                    {
+                        'subnet_name': 'web-subnet',
+                        'address_space': '10.0.1.0/24',
+                        'purpose': 'Web tier hosting',
+                        'security_requirements': 'NSG with web traffic rules'
+                    },
+                    {
+                        'subnet_name': 'app-subnet', 
+                        'address_space': '10.0.2.0/24',
+                        'purpose': 'Application tier hosting',
+                        'security_requirements': 'NSG with app-specific rules'
+                    },
+                    {
+                        'subnet_name': 'data-subnet',
+                        'address_space': '10.0.3.0/24',
+                        'purpose': 'Database tier hosting',
+                        'security_requirements': 'NSG with database access rules'
+                    }
+                ],
+                'network_diagram_description': 'Standard 3-tier architecture with web, application, and data layers'
+            },
+            'integration_points': [
+                {
+                    'type': 'Standard Integration',
+                    'requirement': 'Basic application integration needs',
+                    'recommendation': 'Azure API Management for API governance',
+                    'implementation': 'Standard API management patterns'
+                }
+            ]
+        }

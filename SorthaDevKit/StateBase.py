@@ -127,6 +127,45 @@ class ProcessingResult(BaseModel):
             self.data = data
 
 @dataclass
+class DependencyConnection:
+    """Represents a dependency connection between servers."""
+    source_server: str = ""
+    target_server: str = ""
+    source_ip: str = ""
+    destination_ip: str = ""
+    source_application: str = ""
+    destination_application: str = ""
+    source_process: str = ""
+    destination_process: str = ""
+    connection_type: str = ""  # e.g., "Database", "Web Service", "File Share"
+    protocol: str = ""  # e.g., "HTTPS", "SQL", "SMB"
+    port: str = ""
+    destination_port: str = ""
+    direction: str = ""  # "Inbound", "Outbound", "Bidirectional"
+    description: str = ""
+    criticality: str = ""  # "High", "Medium", "Low"
+    time_slot: str = ""
+
+@dataclass 
+class NetworkSegment:
+    """Represents a network segment or subnet."""
+    segment_name: str = ""
+    subnet: str = ""
+    vlan_id: str = ""
+    purpose: str = ""  # e.g., "DMZ", "Internal", "Database"
+    servers: List[str] = field(default_factory=list)
+
+@dataclass
+class DependencyAnalysis:
+    """Contains dependency analysis data from Azure Migrate."""
+    connections: List[DependencyConnection] = field(default_factory=list)
+    network_segments: List[NetworkSegment] = field(default_factory=list)
+    external_dependencies: List[str] = field(default_factory=list)
+    internal_dependencies: List[str] = field(default_factory=list)
+    critical_paths: List[str] = field(default_factory=list)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+@dataclass
 class MigrationWave:
     wave_number: int
     name: str
@@ -219,4 +258,46 @@ class AzureMigrationPlan:
     document_version: str = "1.0"
     created_date: str = field(default_factory=lambda: datetime.now().strftime("%Y-%m-%d"))
     created_by: str = "Suchitha Malisetty"
+    last_updated: str = field(default_factory=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+@dataclass
+class SubnetRecommendation:
+    name: str
+    address_range: str
+    purpose: str
+    service_endpoints: List[str] = field(default_factory=list)
+
+@dataclass
+class NSGRule:
+    name: str
+    direction: str  # "inbound" or "outbound"
+    protocol: str
+    source_address_prefix: str
+    destination_address_prefix: str
+    destination_port: str
+    access: str = "Allow"
+    priority: int = 100
+    description: str = ""
+
+@dataclass
+class LoadBalancingRule:
+    frontend_port: str
+    backend_port: str
+    protocol: str
+
+@dataclass
+class LoadBalancerConfig:
+    name: str
+    type: str  # "internal" or "public"
+    frontend_ip_config: str
+    backend_pools: List[str]
+    load_balancing_rules: List[LoadBalancingRule] = field(default_factory=list)
+
+@dataclass
+class TargetArchitecture:
+    network_connections: List[DependencyConnection]
+    subnet_recommendations: List[SubnetRecommendation] = field(default_factory=list)
+    nsg_rules: List[NSGRule] = field(default_factory=list)
+    load_balancer_config: List[LoadBalancerConfig] = field(default_factory=list)
+    recommendations: List[str] = field(default_factory=list)
     last_updated: str = field(default_factory=lambda: datetime.now().strftime("%Y-%m-%d"))

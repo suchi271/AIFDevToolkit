@@ -25,6 +25,7 @@ class WorkflowState(TypedDict):
     
     # Processing results
     azure_migrate_data: Any
+    dependency_analysis: Any
     questions_answers: List[QuestionAnswer]
     assessment_report_data: Any
     migration_plan: Any
@@ -61,6 +62,7 @@ class LangGraphMigrationPlanWorkflow:
         workflow.add_node("validate_inputs", self._validate_inputs_node)
         workflow.add_node("setup_llm", self._setup_llm_node)
         workflow.add_node("process_azure_migrate", self._process_azure_migrate_node)
+        workflow.add_node("process_dependency_analysis", self._process_dependency_analysis_node)
         workflow.add_node("process_questions", self._process_questions_node)
         workflow.add_node("generate_assessment_report", self._generate_assessment_report_node)
         workflow.add_node("generate_plan", self._generate_plan_node)
@@ -91,6 +93,14 @@ class LangGraphMigrationPlanWorkflow:
         workflow.add_conditional_edges(
             "process_azure_migrate",
             self._should_continue_after_azure_migrate,
+            {
+                "continue": "process_dependency_analysis",
+                "end": END
+            }
+        )
+        workflow.add_conditional_edges(
+            "process_dependency_analysis",
+            self._should_continue_after_dependency_analysis,
             {
                 "continue": "process_questions",
                 "end": END
@@ -253,6 +263,43 @@ class LangGraphMigrationPlanWorkflow:
         
         return state
     
+    def _process_dependency_analysis_node(self, state: WorkflowState) -> WorkflowState:
+        """Process Azure Migrate dependency analysis report."""
+        print("Processing dependency analysis...")
+        
+        try:
+            dependency_input = state["inputs"].get('azmigrate_dependency_analysis')
+            if not dependency_input or not dependency_input.file_path:
+                print("⚠ No dependency analysis report found, continuing without dependency data")
+                state["dependency_analysis"] = None
+                state["step_completed"]["process_dependency_analysis"] = True
+                return state
+            
+            # Use ExcelProcessor to read dependency analysis
+            dependency_analysis = ExcelProcessor.read_dependency_analysis(dependency_input.file_path)
+            if dependency_analysis:
+                state["dependency_analysis"] = dependency_analysis
+                connection_count = len(dependency_analysis.connections) if dependency_analysis.connections else 0
+                segment_count = len(dependency_analysis.network_segments) if dependency_analysis.network_segments else 0
+                external_count = len(dependency_analysis.external_dependencies) if dependency_analysis.external_dependencies else 0
+                print(f"✓ Processed dependency analysis: {connection_count} connections, {segment_count} network segments, {external_count} external dependencies")
+                state["step_completed"]["process_dependency_analysis"] = True
+            else:
+                print("⚠ Failed to process dependency analysis, continuing without dependency data")
+                state["dependency_analysis"] = None
+                state["errors"].append("Dependency analysis processing failed")
+                state["step_completed"]["process_dependency_analysis"] = True
+                
+        except Exception as e:
+            error = f"Error processing dependency analysis: {str(e)}"
+            print(f"⚠ {error}")
+            print("⚠ Continuing without dependency analysis data")
+            state["dependency_analysis"] = None
+            state["errors"].append(error)
+            state["step_completed"]["process_dependency_analysis"] = True
+        
+        return state
+    
     def _process_questions_node(self, state: WorkflowState) -> WorkflowState:
         """Process questions and transcript to generate Q&A pairs."""
         print("Processing questions...")
@@ -313,6 +360,7 @@ class LangGraphMigrationPlanWorkflow:
             assessment_data = self.assessment_report_generator.generate_assessment_report(
                 questions_answers=state["questions_answers"],
                 azure_migrate_data=state.get("azure_migrate_data"),
+                dependency_analysis=state.get("dependency_analysis"),
                 project_name=project_name,
                 llm_client=state.get("llm_client")
             )
@@ -597,6 +645,11 @@ class LangGraphMigrationPlanWorkflow:
     def _should_continue_after_azure_migrate(self, state: WorkflowState) -> str:
         """Decide whether to continue after Azure Migrate processing."""
         # Continue even if Azure Migrate processing fails - we can work with minimal data
+        return "continue"
+    
+    def _should_continue_after_dependency_analysis(self, state: WorkflowState) -> str:
+        """Decide whether to continue after dependency analysis processing."""
+        # Continue even if dependency analysis processing fails - it's optional for assessment reports
         return "continue"
     
     def _should_continue_after_plan(self, state: WorkflowState) -> str:

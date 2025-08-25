@@ -1,7 +1,7 @@
 import pandas as pd
 import openpyxl
 from typing import List, Dict, Any
-from .StateBase import QuestionAnswer, ExcelOutputType, AzureMigrateServer, AzureMigrateReport
+from .StateBase import QuestionAnswer, ExcelOutputType, AzureMigrateServer, AzureMigrateReport, DependencyAnalysis, DependencyConnection, NetworkSegment
 import os
 from datetime import datetime
 import re
@@ -564,3 +564,295 @@ class ExcelProcessor:
             return True
         except:
             return False
+    
+    @staticmethod
+    def read_dependency_analysis(file_path: str) -> DependencyAnalysis:
+        """
+        Read and parse Azure Migrate dependency analysis from Excel file.
+        
+        Args:
+            file_path: Path to the dependency analysis Excel file
+            
+        Returns:
+            DependencyAnalysis object with parsed data
+        """
+        try:
+            # Determine engine to use
+            file_ext = os.path.splitext(file_path)[1].lower()
+            engines = ['openpyxl'] if file_ext == '.xlsx' else ['xlrd'] if file_ext == '.xls' else ['openpyxl', 'xlrd']
+            
+            for engine in engines:
+                try:
+                    excel_file = pd.ExcelFile(file_path, engine=engine)
+                    break
+                except Exception:
+                    continue
+            else:
+                raise Exception(f"Could not read file with any available engine")
+            
+            connections = []
+            network_segments = []
+            external_dependencies = []
+            internal_dependencies = []
+            critical_paths = []
+            metadata = {"sheets_processed": [], "file_path": file_path}
+            
+            # Process each sheet
+            for sheet_name in excel_file.sheet_names:
+                try:
+                    df = pd.read_excel(excel_file, sheet_name=sheet_name)
+                    metadata["sheets_processed"].append(sheet_name)
+                    
+                    # Identify and parse dependency connections
+                    if ExcelProcessor._is_dependency_connections_sheet(df, sheet_name):
+                        sheet_connections = ExcelProcessor._parse_dependency_connections(df, sheet_name)
+                        connections.extend(sheet_connections)
+                    
+                    # Identify and parse network segments
+                    elif ExcelProcessor._is_network_segments_sheet(df, sheet_name):
+                        sheet_segments = ExcelProcessor._parse_network_segments(df, sheet_name)
+                        network_segments.extend(sheet_segments)
+                    
+                    # Identify and parse external dependencies
+                    elif ExcelProcessor._is_external_dependencies_sheet(df, sheet_name):
+                        sheet_external = ExcelProcessor._parse_external_dependencies(df, sheet_name)
+                        external_dependencies.extend(sheet_external)
+                        
+                except Exception as e:
+                    metadata[f"error_{sheet_name}"] = str(e)
+                    continue
+            
+            return DependencyAnalysis(
+                connections=connections,
+                network_segments=network_segments,
+                external_dependencies=external_dependencies,
+                internal_dependencies=internal_dependencies,
+                critical_paths=critical_paths,
+                metadata=metadata
+            )
+            
+        except Exception as e:
+            raise Exception(f"Error reading dependency analysis file {file_path}: {str(e)}")
+
+    @staticmethod
+    def _is_dependency_connections_sheet(df: pd.DataFrame, sheet_name: str) -> bool:
+        """Check if the sheet contains dependency connection data."""
+        sheet_name_lower = sheet_name.lower()
+        dependency_sheet_indicators = [
+            'connection', 'dependency', 'dependencies', 'flow', 'communication',
+            'network flow', 'server connections', 'app dependencies'
+        ]
+        
+        # Check sheet name
+        if any(indicator in sheet_name_lower for indicator in dependency_sheet_indicators):
+            return True
+        
+        # Check column headers
+        if df.empty:
+            return False
+            
+        columns_lower = [str(col).lower() for col in df.columns]
+        dependency_column_indicators = [
+            'source', 'target', 'destination', 'from', 'to', 'protocol', 'port',
+            'connection', 'dependency', 'direction', 'flow'
+        ]
+        
+        matches = sum(1 for indicator in dependency_column_indicators 
+                     if any(indicator in col for col in columns_lower))
+        return matches >= 2
+    
+    @staticmethod
+    def _is_network_segments_sheet(df: pd.DataFrame, sheet_name: str) -> bool:
+        """Check if the sheet contains network segment data."""
+        sheet_name_lower = sheet_name.lower()
+        network_sheet_indicators = ['network', 'segment', 'subnet', 'vlan', 'ip range']
+        
+        if any(indicator in sheet_name_lower for indicator in network_sheet_indicators):
+            return True
+        
+        if df.empty:
+            return False
+            
+        columns_lower = [str(col).lower() for col in df.columns]
+        network_column_indicators = ['subnet', 'vlan', 'segment', 'network', 'ip', 'range']
+        
+        matches = sum(1 for indicator in network_column_indicators 
+                     if any(indicator in col for col in columns_lower))
+        return matches >= 1
+    
+    @staticmethod
+    def _is_external_dependencies_sheet(df: pd.DataFrame, sheet_name: str) -> bool:
+        """Check if the sheet contains external dependency data."""
+        sheet_name_lower = sheet_name.lower()
+        external_sheet_indicators = ['external', 'internet', 'cloud', 'third party', 'outside']
+        
+        return any(indicator in sheet_name_lower for indicator in external_sheet_indicators)
+
+    @staticmethod
+    def _parse_dependency_connections(df: pd.DataFrame, sheet_name: str) -> List[DependencyConnection]:
+        """Parse dependency connections from DataFrame with focus on network traffic data."""
+        connections = []
+        
+        # Enhanced column mapping to match Azure Migrate dependency analysis format
+        column_mapping = {
+            'time_slot': ['time slot', 'time', 'timestamp', 'date time', 'period'],
+            'source_server': ['source server name', 'source server', 'source machine', 'from server', 'source'],
+            'source_ip': ['source ip', 'source ip address', 'source address', 'from ip'],
+            'source_application': ['source application', 'source app', 'source process name', 'source service'],
+            'source_process': ['source process', 'source proc'],
+            'target_server': ['destination server name', 'destination server', 'target server', 'to server', 'destination', 'target'],
+            'destination_ip': ['destination ip', 'destination ip address', 'dest ip', 'target ip', 'to ip'],
+            'destination_application': ['destination application', 'destination app', 'dest application', 'target application'],
+            'destination_process': ['destination process', 'dest process', 'target process'],
+            'destination_port': ['destination port', 'dest port', 'target port', 'port', 'service port'],
+            'connection_type': ['connection type', 'type', 'service type', 'dependency type', 'service'],
+            'protocol': ['protocol', 'transport protocol', 'network protocol'],
+            'direction': ['direction', 'flow direction', 'communication direction'],
+            'description': ['description', 'details', 'notes', 'comments'],
+            'criticality': ['criticality', 'priority', 'importance', 'critical', 'severity']
+        }
+        
+        # Find actual column names using exact matching for Azure Migrate format
+        df_columns_lower = [col.lower().strip() for col in df.columns]
+        mapped_columns = {}
+        
+        for standard_name, variations in column_mapping.items():
+            for variation in variations:
+                if variation in df_columns_lower:
+                    mapped_columns[standard_name] = df.columns[df_columns_lower.index(variation)]
+                    break
+        
+        print(f"DEBUG: Found columns in {sheet_name}: {list(df.columns)}")
+        print(f"DEBUG: Mapped columns: {mapped_columns}")
+        
+        # Process each row
+        for _, row in df.iterrows():
+            try:
+                connection = DependencyConnection()
+                
+                # Extract all available information using mapped columns
+                if 'time_slot' in mapped_columns:
+                    connection.time_slot = str(row[mapped_columns['time_slot']]) if pd.notna(row[mapped_columns['time_slot']]) else ""
+                
+                if 'source_server' in mapped_columns:
+                    connection.source_server = str(row[mapped_columns['source_server']]) if pd.notna(row[mapped_columns['source_server']]) else ""
+                
+                if 'source_ip' in mapped_columns:
+                    connection.source_ip = str(row[mapped_columns['source_ip']]) if pd.notna(row[mapped_columns['source_ip']]) else ""
+                
+                if 'source_application' in mapped_columns:
+                    connection.source_application = str(row[mapped_columns['source_application']]) if pd.notna(row[mapped_columns['source_application']]) else ""
+                
+                if 'source_process' in mapped_columns:
+                    connection.source_process = str(row[mapped_columns['source_process']]) if pd.notna(row[mapped_columns['source_process']]) else ""
+                
+                if 'target_server' in mapped_columns:
+                    connection.target_server = str(row[mapped_columns['target_server']]) if pd.notna(row[mapped_columns['target_server']]) else ""
+                
+                if 'destination_ip' in mapped_columns:
+                    connection.destination_ip = str(row[mapped_columns['destination_ip']]) if pd.notna(row[mapped_columns['destination_ip']]) else ""
+                
+                if 'destination_application' in mapped_columns:
+                    connection.destination_application = str(row[mapped_columns['destination_application']]) if pd.notna(row[mapped_columns['destination_application']]) else ""
+                
+                if 'destination_process' in mapped_columns:
+                    connection.destination_process = str(row[mapped_columns['destination_process']]) if pd.notna(row[mapped_columns['destination_process']]) else ""
+                
+                if 'destination_port' in mapped_columns:
+                    connection.destination_port = str(row[mapped_columns['destination_port']]) if pd.notna(row[mapped_columns['destination_port']]) else ""
+                    # Also set port for backward compatibility
+                    connection.port = connection.destination_port
+                
+                if 'connection_type' in mapped_columns:
+                    connection.connection_type = str(row[mapped_columns['connection_type']]) if pd.notna(row[mapped_columns['connection_type']]) else ""
+                
+                if 'protocol' in mapped_columns:
+                    connection.protocol = str(row[mapped_columns['protocol']]) if pd.notna(row[mapped_columns['protocol']]) else ""
+                
+                if 'direction' in mapped_columns:
+                    connection.direction = str(row[mapped_columns['direction']]) if pd.notna(row[mapped_columns['direction']]) else ""
+                
+                if 'description' in mapped_columns:
+                    connection.description = str(row[mapped_columns['description']]) if pd.notna(row[mapped_columns['description']]) else ""
+                
+                if 'criticality' in mapped_columns:
+                    connection.criticality = str(row[mapped_columns['criticality']]) if pd.notna(row[mapped_columns['criticality']]) else ""
+                
+                # Add connection if we have essential network traffic data (source and destination info)
+                if (connection.source_ip and connection.destination_ip) or (connection.source_server and connection.target_server):
+                    connections.append(connection)
+                    
+            except Exception as e:
+                print(f"Warning: Error parsing connection row: {e}")
+                continue
+        
+        print(f"DEBUG: Parsed {len(connections)} connections from {sheet_name}")
+        return connections
+
+    @staticmethod
+    def _parse_network_segments(df: pd.DataFrame, sheet_name: str) -> List[NetworkSegment]:
+        """Parse network segment data from a sheet."""
+        segments = []
+        
+        # Column mapping for network segments
+        column_mapping = {
+            'segment_name': ['segment name', 'network name', 'subnet name', 'name'],
+            'subnet': ['subnet', 'ip range', 'network range', 'cidr', 'network'],
+            'vlan_id': ['vlan', 'vlan id', 'vlan number'],
+            'purpose': ['purpose', 'description', 'type', 'function', 'role'],
+            'servers': ['servers', 'hosts', 'machines', 'computers', 'devices']
+        }
+        
+        # Find actual column names
+        df_columns_lower = [col.lower().strip() for col in df.columns]
+        mapped_columns = {}
+        
+        for standard_name, variations in column_mapping.items():
+            for variation in variations:
+                if variation in df_columns_lower:
+                    mapped_columns[standard_name] = df.columns[df_columns_lower.index(variation)]
+                    break
+        
+        # Process each row
+        for _, row in df.iterrows():
+            try:
+                segment = NetworkSegment()
+                
+                if 'segment_name' in mapped_columns:
+                    segment.segment_name = str(row[mapped_columns['segment_name']]) if pd.notna(row[mapped_columns['segment_name']]) else ""
+                
+                if 'subnet' in mapped_columns:
+                    segment.subnet = str(row[mapped_columns['subnet']]) if pd.notna(row[mapped_columns['subnet']]) else ""
+                
+                if 'vlan_id' in mapped_columns:
+                    segment.vlan_id = str(row[mapped_columns['vlan_id']]) if pd.notna(row[mapped_columns['vlan_id']]) else ""
+                
+                if 'purpose' in mapped_columns:
+                    segment.purpose = str(row[mapped_columns['purpose']]) if pd.notna(row[mapped_columns['purpose']]) else ""
+                
+                if 'servers' in mapped_columns and pd.notna(row[mapped_columns['servers']]):
+                    # Split server list if it's comma-separated
+                    servers_str = str(row[mapped_columns['servers']])
+                    segment.servers = [s.strip() for s in servers_str.split(',') if s.strip()]
+                
+                segments.append(segment)
+                    
+            except Exception as e:
+                print(f"Warning: Error parsing network segment row: {e}")
+                continue
+        
+        return segments
+
+    @staticmethod
+    def _parse_external_dependencies(df: pd.DataFrame, sheet_name: str) -> List[str]:
+        """Parse external dependency data from a sheet."""
+        external_deps = []
+        
+        # Look for columns that might contain external dependencies
+        for column in df.columns:
+            if any(keyword in column.lower() for keyword in ['external', 'dependency', 'service', 'url', 'endpoint']):
+                for _, row in df.iterrows():
+                    if pd.notna(row[column]) and str(row[column]).strip():
+                        external_deps.append(str(row[column]).strip())
+        
+        return list(set(external_deps))  # Remove duplicates
