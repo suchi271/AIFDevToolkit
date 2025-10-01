@@ -14,8 +14,11 @@
 - [Azure Migration Integration](#azure-migration-integration)
 
 ## Overview
+Migration projects often face significant delays due to manual, time-consuming, and error-prone processes such as application intake, assessment, and documentation. These tasks can take hours to complete, slowing cloud adoption and driving up project costs.
 
-The AIFDevToolkit is an AI-powered application assessment and migration planning toolkit designed to help clients migrate applications from multi-cloud platforms like AWS, GCP to Azure. It uses advanced AI models to analyze existing applications and generate comprehensive migration plans, assessment reports, and documentation.
+The AIFDevToolkit addresses this challenge with an Agentic AI-powered application assessment and migration planning toolkit. Designed for multi-cloud environments—including AWS, GCP, and Azure—it leverages advanced AI models to automate discovery, analysis, and reporting. The solution streamlines the extraction and organization of application details from calls and documents, generating accurate migration plans, assessment reports, and supporting documentation in minutes.
+
+By reducing manual effort, improving accuracy, and accelerating decision-making, the AIFDevToolkit helps organizations adopt cloud platforms faster, at lower cost, and with greater scalability.
 
 ### Key Features
 - **AI-Driven Assessment**: Automated application analysis using OpenAI models
