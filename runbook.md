@@ -15,7 +15,7 @@
 
 ## Overview
 
-The AIFDevToolkit is an AI-powered application assessment and migration planning toolkit designed to help clients migrate applications to Azure. It uses advanced AI models to analyze existing applications and generate comprehensive migration plans, assessment reports, and documentation.
+The AIFDevToolkit is an AI-powered application assessment and migration planning toolkit designed to help clients migrate applications from multi-cloud platforms like AWS, GCP to Azure. It uses advanced AI models to analyze existing applications and generate comprehensive migration plans, assessment reports, and documentation.
 
 ### Key Features
 - **AI-Driven Assessment**: Automated application analysis using OpenAI models
