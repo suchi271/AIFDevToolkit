@@ -1,0 +1,99 @@
+Suchitha (Microsoft Consultant):
+Good afternoon, Frank and Will. Thank you for joining today’s session. I’d like to walk through the Contoso application to understand its architecture, integration points, and deployment lifecycle. Shall we begin with a quick overview?
+
+Frank (Customer):
+Sure, Suchitha. Contoso is a Kellogg's-developed system used in the UK market, owned by our XYZ department. It holds customer product and service inventory data for Mobile and KFPC and supports the “View My Service” journey for Kellogg's SME customers.
+
+Suchitha:
+Thanks, Frank. So, it’s primarily a backend system with no direct user interface, correct?
+
+Will (Customer):
+Exactly. It’s a system-to-system integration app. No HTTP/HTTPS traffic. Communication is strictly via SFTP and database connections. Middleware systems like TIL and MFT handle all interactions.
+
+Suchitha:
+Understood. Regarding environments, I see Contoso is deployed across Dev, SIT, Test, PAT, Pre-Prod, and Production. Can you confirm which environments are integrated?
+
+Will:
+All environments except Pre-Prod and Production are integrated within the Development setup. Pre-Prod and Prod are isolated for stability and compliance.
+
+Suchitha:
+Got it. Now, let’s talk about classification. I noticed the application is marked as Low business criticality, Gold service category, and Confidential (C3) for information classification. Is this consistent across environments?
+
+Frank:
+Mostly. Dev and Pre-Prod are Low/Bronze/C3. Production is Medium/Gold/C3. The classification aligns with the service impact and data sensitivity.
+
+Suchitha:
+Thanks for clarifying. Regarding infrastructure, you mentioned the app is hosted in the Swindon datacentre on ACI. Is BCDR configured?
+
+Will:
+Yes, but only in Production. We currently use Zetro for DR, but we’re planning to migrate to Azure Site Recovery.
+
+Suchitha:
+Perfect. And backups?
+
+Frank:
+Backups are configured only for Production, in line with the Gold category. No backup strategy for lower environments.
+
+Suchitha:
+Makes sense. Now, about integration: TIL updates the database directly using DB authentication, and MFT uploads files to the app server via SFTP. Are all servers domain-joined?
+
+Will:
+Yes, all servers are domain-joined and accessible via SSH from the UK network. Databases are accessible via TCP/SQL from the same network.
+
+Suchitha:
+Thanks, Will. Is there any CI/CD pipeline in place?
+
+Frank:
+No, there’s no CI/CD for either application or infrastructure. Deployments are manual.
+
+Suchitha:
+Understood. Lastly, are there any SLAs defined?
+
+Will:
+Yes, SLAs follow the Gold service category for Production. Lower environments don’t have formal SLAs.
+
+Suchitha:
+Thanks for the detailed walkthrough. Now, moving to operational readiness—were any concerns identified during the assessment?
+
+Frank:
+No operational concerns were identified. The current operational teams are fully capable of managing the application and infrastructure post-migration.
+
+Suchitha:
+That’s great to hear. Are acceptance tests available for the migration phase?
+
+Will:
+Not yet. The application teams will create acceptance test cases before migration. These will include:
+
+TIL service connectivity to IB DB
+TIL MFT connectivity to IB App server
+IB App server connectivity to IB DB
+IB DB connectivity with BIODS
+IB operations response SLA validation
+Suchitha:
+Perfect. For monitoring, is there any tooling in place?
+
+Frank:
+Yes, Splunk is used for monitoring in the Production environment. There’s no such arrangement in lower environments.
+
+Suchitha:
+Understood. Are there any agents or security tools we should be aware of?
+
+Will:
+Yes, the following agents are present and added to the Comms Matrix:
+
+Qualys
+Microsoft Defender
+HP Tooling
+True Sight for server automation and update management
+And for security:
+
+CyberArk for password management and RDP connections
+Qualys Scanners for vulnerability scanning
+Suchitha:
+Thanks, Will. That’s very helpful. This gives us a comprehensive view of Contoso’s operational and security posture. I’ll consolidate this into our migration readiness documentation. Is there anything else you’d like to add?
+
+Frank:
+Just a reminder that any impact to Contoso affects the “View My Services” and Kellogg's Pulse Connect sales journeys. It’s a critical backend system despite its low business criticality label.
+
+Suchitha:
+Noted. Thanks again, Frank and Will. I’ll follow up with a summary and next steps.
