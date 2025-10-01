@@ -38,8 +38,8 @@ ENV/
 env/
 
 # Input and Output directories
-input/
-output/
+# input/
+# output/
 
 # IDE and Editor files
 .vscode/
